@@ -5,48 +5,28 @@ everything else is done and verified.
 
 ---
 
-## 1. The one blocker (~30 seconds to clear)
+## 1. Resolved: the API blocker was a wrong hostname
 
-**The Supabase REST API cannot see the tables.** Every request returns:
+For most of the session the REST API returned `PGRST205  Could not find the
+table public.stories in the schema cache` for every request, and a lot of time
+went into chasing PostgREST cache behaviour.
 
-```
-PGRST205  Could not find the table 'public.stories' in the schema cache
-```
+**That diagnosis was wrong.** The project's own `.env` carries a stale Supabase
+ref, `inpghajvnwdhmozrupfh`, which 404s. The live Cloud database is
+`oskgbaudwjxttfzxzbmx`, and its API was serving correctly the whole time. The
+tables were never missing from any cache — the requests were going to a
+different project.
 
-The database itself is completely fine — schema, data, security and the
-read-path functions are all verified working through direct SQL. It is
-PostgREST's schema cache that is empty and will not rebuild.
+`.env.local` and `.env.ingest` now point at the correct ref. `node
+scripts/verify.mjs` passes all 20 checks.
 
-### Fix
+Lesson worth keeping: when an API says a table does not exist but SQL says it
+does, confirm the hostname identifies the same project **before** investigating
+the service. The `sb-project-ref` response header states it plainly, and it did
+not match what MCP was writing to.
 
-In the Lovable chat for the project, ask it to **refresh the database schema /
-regenerate the Supabase types**. Its migration pipeline rebuilds the API layer.
-This costs Lovable credits, which is why it was left for you.
-
-Confirm it worked:
-
-```sh
-node scripts/verify.mjs
-```
-
-Everything downstream is already in place, so the app should light up
-immediately after.
-
-### What was already ruled out
-
-Each of these was tested against the live database, and every setting was
-returned to its Supabase default afterwards.
-
-| Hypothesis | Finding |
-|---|---|
-| Stale cache | `NOTIFY pgrst, 'reload schema'` had no effect |
-| DDL watch trigger missing | `pgrst_ddl_watch` present and enabled |
-| Wrong database | PostgREST is connected to this exact DB; `sb-project-ref` header matches |
-| Missing privileges | `authenticator` and `anon` both see all four tables in the catalog |
-| Exposed-schema config | overriding `pgrst.db_schemas` changed nothing |
-| Statement timeout | raising `authenticator`'s 8s timeout changed nothing |
-| Dead connection | terminating the backend forced a clean reconnect; cache still empty |
-| Our own code | Lovable's generated `types.ts` reads `Tables: { [_ in never]: never }` — its tooling cannot see them either |
+Everything changed on the database during that investigation was reverted to
+Supabase defaults.
 
 ---
 
