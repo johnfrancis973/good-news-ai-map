@@ -103,8 +103,9 @@ for (let i = 0; i < fresh.length; i++) {
       continue;
     }
 
-    const row = await buildStoryRow(decision, scraped, item, payload, i);
-    published.push(row);
+    const row = await buildStoryRow(decision, scraped, item, payload, i, log);
+    // location_hint is kept for debugging only; it is never a database column.
+    published.push({ ...row, _location_hint: decision.location_hint ?? null });
     log(`PUBLISHED [${row.category}] ${String(row.title).slice(0, 62)}`);
   } catch (err) {
     rejected.push({ url: item.url, reason: `error: ${String(err).slice(0, 200)}` });

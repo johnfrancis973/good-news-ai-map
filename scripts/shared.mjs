@@ -13,7 +13,9 @@ export const PRESETS = {
     location: "Cayenne, French Guiana",
     latitude: 4.9227,
     longitude: -52.3269,
-    radius_km: 150,
+    // French Guiana is ~300km across and its news is territory-wide, so the
+    // browse radius covers the territory rather than just the commune.
+    radius_km: 300,
     country: "French Guiana",
     country_code: "gf",
     outlets: [

@@ -459,10 +459,44 @@ export function verdictFor(decision) {
 
 // ---------------------------------------------------------------- geocoding
 
-export async function geocode(place, countryCode) {
+// Nominatim asks for at most 1 request/second.
+const nominatimLimiter = new RateLimiter(55);
+
+function haversineKm(aLat, aLng, bLat, bLng) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+/**
+ * Resolve a place named in an article to coordinates, constrained to a box
+ * around the target region.
+ *
+ * Do NOT filter by country code here. Nominatim files French Guiana under "fr",
+ * not "gf", so countrycodes=gf returned zero rows for Cayenne, Kourou, Macouria
+ * and every other town in the territory - which silently pinned every story to
+ * a jittered point around the region centre. A bounded viewbox plus a distance
+ * check constrains the result without depending on country coding at all.
+ */
+export async function geocode(place, bounds, log) {
+  const { lat, lng, radiusKm } = bounds;
+  const boxKm = Math.max(radiusKm ?? 50, 25) * 1.5;
+  const dLat = boxKm / 111;
+  const dLng = boxKm / (111 * Math.max(Math.cos((lat * Math.PI) / 180), 0.01));
+
   try {
-    const params = new URLSearchParams({ q: place, format: "json", limit: "1" });
-    if (countryCode) params.set("countrycodes", String(countryCode).toLowerCase());
+    await nominatimLimiter.take();
+    const params = new URLSearchParams({
+      q: place,
+      format: "json",
+      limit: "1",
+      bounded: "1",
+      viewbox: [lng - dLng, lat + dLat, lng + dLng, lat - dLat].join(","),
+    });
     const res = await fetch(`${NOMINATIM}?${params}`, {
       headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
     });
@@ -470,33 +504,50 @@ export async function geocode(place, countryCode) {
     const rows = await res.json();
     const hit = Array.isArray(rows) ? rows[0] : null;
     if (!hit) return null;
-    const lat = parseFloat(hit.lat);
-    const lng = parseFloat(hit.lon);
-    if (isNaN(lat) || isNaN(lng)) return null;
-    return { lat, lng };
+
+    const hLat = parseFloat(hit.lat);
+    const hLng = parseFloat(hit.lon);
+    if (isNaN(hLat) || isNaN(hLng)) return null;
+
+    // Reject a match that landed implausibly far from the target region.
+    const away = haversineKm(lat, lng, hLat, hLng);
+    if (away > boxKm * 1.5) {
+      log?.(`geocode rejected "${place}": ${Math.round(away)}km from centre`);
+      return null;
+    }
+    return { lat: hLat, lng: hLng };
   } catch {
     return null;
   }
 }
 
 /** Builds the persisted column set. The scraped markdown is NOT part of it. */
-export async function buildStoryRow(decision, scraped, item, payload, index) {
+export async function buildStoryRow(decision, scraped, item, payload, index, log) {
   let lat = payload.latitude;
   let lng = payload.longitude;
   let placeName = payload.location;
 
+  let located = false;
   if (decision.location_hint) {
-    const hit = await geocode(decision.location_hint, payload.country_code ?? null);
+    const hit = await geocode(decision.location_hint, {
+      lat: payload.latitude,
+      lng: payload.longitude,
+      radiusKm: payload.radius_km ?? 50,
+    }, log);
     if (hit) {
       lat = hit.lat;
       lng = hit.lng;
       placeName = decision.location_hint;
+      located = true;
     }
   }
-  if (lat === payload.latitude && lng === payload.longitude) {
+  if (!located) {
+    // Could not resolve the article place. Keep the marker honest: it sits near
+    // the region centre and the label stays the region, not a town we guessed.
     const [dLat, dLng] = jitter(item.url, index);
     lat += dLat;
     lng += dLng;
+    log?.(`no geocode for "${decision.location_hint ?? "(none)"}" - using region centre`);
   }
 
   return {
@@ -681,7 +732,7 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
           continue;
         }
 
-        const row = await buildStoryRow(decision, scraped, item, payload, index);
+        const row = await buildStoryRow(decision, scraped, item, payload, index, log);
         delete row.source_url; // already set when the row was claimed
 
         const { error: updateError } = await supabase
