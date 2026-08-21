@@ -1,0 +1,9 @@
+project_id = "good-news-ai-map"
+
+[functions.ingest-location]
+# Gated by the x-admin-token header instead of a Supabase JWT.
+verify_jwt = false
+
+[functions.geocode]
+# Public read-only helper. No secrets, no paid APIs.
+verify_jwt = false

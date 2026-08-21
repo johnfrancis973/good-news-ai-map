@@ -1,0 +1,137 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 150 20% 99%;
+    --foreground: 200 20% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 200 20% 12%;
+
+    --muted: 160 16% 96%;
+    --muted-foreground: 200 8% 44%;
+
+    --primary: 168 62% 26%;
+    --primary-foreground: 150 30% 98%;
+
+    --accent: 168 46% 94%;
+    --accent-foreground: 168 62% 22%;
+
+    --border: 165 14% 89%;
+    --input: 165 14% 89%;
+    --ring: 168 62% 32%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 200 24% 8%;
+    --foreground: 160 12% 94%;
+
+    --card: 200 22% 11%;
+    --card-foreground: 160 12% 94%;
+
+    --muted: 200 18% 16%;
+    --muted-foreground: 190 8% 62%;
+
+    --primary: 168 52% 46%;
+    --primary-foreground: 200 26% 8%;
+
+    --accent: 200 20% 18%;
+    --accent-foreground: 168 52% 74%;
+
+    --border: 200 16% 20%;
+    --input: 200 16% 20%;
+    --ring: 168 52% 46%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer components {
+  .prose-block p {
+    @apply text-[15px] leading-7 text-foreground/85;
+  }
+}
+
+/* ---------------------------------------------------------------- Leaflet */
+/* Leaflet ships its own stylesheet; these are the overrides that make it sit
+   inside the app's design system instead of looking like a default map demo. */
+
+.leaflet-container {
+  @apply bg-muted font-sans;
+  z-index: 0;
+}
+
+.leaflet-control-attribution {
+  @apply bg-background/85 text-[10px] text-muted-foreground;
+}
+
+.leaflet-control-attribution a {
+  @apply text-muted-foreground underline;
+}
+
+.leaflet-bar a {
+  @apply bg-card text-foreground border-border;
+}
+
+.leaflet-bar a:hover {
+  @apply bg-accent;
+}
+
+.leaflet-popup-content-wrapper {
+  @apply rounded-lg bg-card text-card-foreground shadow-lg;
+}
+
+.leaflet-popup-tip {
+  @apply bg-card;
+}
+
+.gnam-marker {
+  background: transparent;
+  border: 0;
+}
+
+.gnam-marker-dot {
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  border: 2.5px solid white;
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.35);
+  transition: transform 0.15s ease;
+}
+
+.gnam-marker-active .gnam-marker-dot {
+  transform: scale(1.45);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.45);
+}
+
+/* Scrollbar in the story panel */
+.thin-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-border;
+}
+.thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
