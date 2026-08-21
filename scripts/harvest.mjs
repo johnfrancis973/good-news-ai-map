@@ -67,10 +67,13 @@ console.log(`  Firecrawl is rate limited, so this runs serially and takes minute
 const { candidates, queriesRun } = await searchCandidates(cfg.firecrawlKey, payload, log);
 log(`${candidates.length} unique article-shaped candidates`);
 
-const fresh = candidates
-  .filter((c) => !known.has(c.url))
-  .slice(0, Math.min(payload.max_candidates ?? MAX_CANDIDATES, 40));
-log(`${candidates.length - fresh.length} already known, ${fresh.length} to process`);
+const unseen = candidates.filter((c) => !known.has(c.url));
+const cap = Math.min(payload.max_candidates ?? MAX_CANDIDATES, 40);
+const fresh = unseen.slice(0, cap);
+log(
+  `${candidates.length - unseen.length} already known, ` +
+    `${unseen.length - fresh.length} over the ${cap} cap, ${fresh.length} to process`,
+);
 
 const published = [];
 const rejected = [];
@@ -104,6 +107,11 @@ for (let i = 0; i < fresh.length; i++) {
     }
 
     const row = await buildStoryRow(decision, scraped, item, payload, i, log);
+    if (!row) {
+      rejected.push({ url: item.url, reason: "location could not be verified in the target region" });
+      log(`rejected (location): ${String(decision.location_hint).slice(0, 60)}`);
+      continue;
+    }
     // location_hint is kept for debugging only; it is never a database column.
     published.push({ ...row, _location_hint: decision.location_hint ?? null });
     log(`PUBLISHED [${row.category}] ${String(row.title).slice(0, 62)}`);

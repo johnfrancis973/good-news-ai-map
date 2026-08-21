@@ -542,12 +542,20 @@ export async function buildStoryRow(decision, scraped, item, payload, index, log
     }
   }
   if (!located) {
-    // Could not resolve the article place. Keep the marker honest: it sits near
-    // the region centre and the label stays the region, not a town we guessed.
+    if (decision.location_hint) {
+      // The article names a place, but it could not be resolved inside the
+      // target region. That is a geography failure, not a reason to guess:
+      // pinning it to the region centre would put a story about somewhere else
+      // on this map under a label it does not have. Reject instead.
+      log?.(`unresolvable place "${decision.location_hint}" - rejecting`);
+      return null;
+    }
+    // No place named at all: a region-level marker is honest, and the label
+    // stays the region rather than a town we invented.
     const [dLat, dLng] = jitter(item.url, index);
     lat += dLat;
     lng += dLng;
-    log?.(`no geocode for "${decision.location_hint ?? "(none)"}" - using region centre`);
+    log?.("article names no place - using region centre");
   }
 
   return {
@@ -733,6 +741,11 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
         }
 
         const row = await buildStoryRow(decision, scraped, item, payload, index, log);
+        if (!row) {
+          await reject(supabase, item.id, "location could not be verified in the target region");
+          stats.rejected++;
+          continue;
+        }
         delete row.source_url; // already set when the row was claimed
 
         const { error: updateError } = await supabase

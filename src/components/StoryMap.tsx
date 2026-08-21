@@ -56,14 +56,39 @@ export function StoryMap({
   onMarkerClick,
   onMarkerHover,
 }: Props) {
-  const markers = useMemo(
-    () =>
-      stories.map((s) => ({
-        story: s,
-        color: CATEGORY_COLORS[categoryOf(s.category)],
-      })),
-    [stories],
-  );
+  // Several stories legitimately resolve to the same town centre, which would
+  // stack them into one unclickable marker. The database keeps the true
+  // coordinates; only the rendered position is fanned out, deterministically so
+  // a marker does not jump between renders.
+  const markers = useMemo(() => {
+    const groups = new Map<string, StorySummary[]>();
+    for (const story of stories) {
+      const key = `${story.latitude.toFixed(4)},${story.longitude.toFixed(4)}`;
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(story);
+      else groups.set(key, [story]);
+    }
+
+    const out: Array<{ story: StorySummary; color: string; position: [number, number] }> = [];
+    for (const bucket of groups.values()) {
+      bucket.forEach((story, i) => {
+        let [lat, lng] = [story.latitude, story.longitude];
+        if (bucket.length > 1) {
+          // ~450m ring, widening slightly for larger clusters.
+          const radius = 0.004 * (1 + Math.floor(i / 8) * 0.8);
+          const angle = (i / bucket.length) * 2 * Math.PI;
+          lat += radius * Math.sin(angle);
+          lng += radius * Math.cos(angle);
+        }
+        out.push({
+          story,
+          color: CATEGORY_COLORS[categoryOf(story.category)],
+          position: [lat, lng],
+        });
+      });
+    }
+    return out;
+  }, [stories]);
 
   return (
     <MapContainer
@@ -82,10 +107,10 @@ export function StoryMap({
 
       <ViewController center={center} stories={stories} />
 
-      {markers.map(({ story, color }) => (
+      {markers.map(({ story, color, position }) => (
         <Marker
           key={story.id}
-          position={[story.latitude, story.longitude]}
+          position={position}
           icon={markerIcon(color, activeId === story.id)}
           zIndexOffset={activeId === story.id ? 1000 : 0}
           eventHandlers={{
