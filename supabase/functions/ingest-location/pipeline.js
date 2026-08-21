@@ -100,6 +100,10 @@ REJECT the article (accepted=false) if ANY of these is true:
   constructive outcome for the local community
 - it is a memorial, vigil, obituary or tribute following a death, however
   moving the community response was
+- it is a protest, rally, petition or campaign opposing something, even when
+  the cause is sympathetic: opposition is not yet an improvement
+- it is private commercial property news - a development loan secured, a luxury
+  building completed, a site acquired - with no clear public benefit
 - it is a global ranking, index or listicle that merely mentions the target
   place among many others
 - it is primarily promotional coverage of a commercial attraction or product
@@ -109,6 +113,10 @@ REJECT the article (accepted=false) if ANY of these is true:
 A REPORTED EVENT HAS A WHEN. If you cannot point to something that happened -
 an opening, a completion, a result, an award, a launch that already occurred -
 then this is not a story for this map, however worthy the underlying programme.
+
+THE TEST IS WHETHER SOMETHING GOT BETTER FOR ORDINARY PEOPLE THERE. Ask who is
+better off and how. If the honest answer is "investors", "a developer" or "no
+one yet", reject it.
 
 GEOGRAPHY IS A HARD FILTER. If the event did not happen in or directly concern
 the target geography, reject it, even if the story is excellent. A story about a
