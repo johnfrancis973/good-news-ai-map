@@ -280,6 +280,31 @@ function isBlocked(url) {
   return DOMAIN_BLOCKLIST.some((d) => lower.includes(d));
 }
 
+/**
+ * Page <title> tags usually carry a publisher suffix - "Headline - silive.com",
+ * "Headline | amNewYork". That is boilerplate, not part of the headline, so it
+ * is trimmed. Only trailing separators are touched, and only when what follows
+ * is short enough to be a site name rather than part of the sentence.
+ */
+export function cleanTitle(raw, sourceName) {
+  const SEP = "[-|–—]";
+  const trailing = new RegExp(`^(.{20,})\\s+${SEP}\\s+([^-|–—]{2,40})$`);
+
+  let t = String(raw ?? "").trim().replace(/\s+/g, " ");
+  for (let i = 0; i < 2; i++) {
+    const m = t.match(trailing);
+    if (!m) break;
+    const tail = m[2].trim();
+    const looksLikeSite =
+      /\.(com|org|net|fr|uk|gov|nyc)$/i.test(tail) ||
+      (sourceName && tail.toLowerCase() === String(sourceName).toLowerCase()) ||
+      /(news|times|post|daily|gazette|herald|magazine|office|city hall)$/i.test(tail);
+    if (!looksLikeSite) break;
+    t = m[1].trim();
+  }
+  return t;
+}
+
 /** Article-shaped URLs have a dated path or a multi-word slug. */
 function looksLikeArticle(url) {
   try {
@@ -586,10 +611,14 @@ export async function buildStoryRow(decision, scraped, item, payload, index, log
     log?.("article names no place - using region centre");
   }
 
+  const rawTitle = scraped.title ?? item.title ?? item.url;
+  const sourceName =
+    decision.source_name ?? scraped.sourceName ?? new URL(item.url).hostname;
+
   return {
-    title: scraped.title ?? item.title ?? item.url,
+    title: cleanTitle(rawTitle, sourceName),
     source_url: item.url,
-    source_name: decision.source_name ?? scraped.sourceName ?? new URL(item.url).hostname,
+    source_name: sourceName,
     published_at: toIso(decision.published_date) ?? scraped.publishedAt,
     location_name: placeName,
     latitude: lat,

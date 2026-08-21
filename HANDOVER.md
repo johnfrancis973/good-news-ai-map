@@ -104,13 +104,17 @@ That grant is revoked, and default privileges for future tables with it.
 
 ## 4. Data
 
-17 published stories across 3 locations, every one traced to a real source URL.
+24 published stories across 4 locations, every one traced to a real source URL.
+9 distinct publishers. Nothing in the database is unpublished.
 
 | Location | Stories |
 |---|---|
 | Cayenne / French Guiana | 12 |
+| New York | 7 |
 | London | 4 |
 | Paris | 1 |
+
+Categories: community 10, education 9, innovation 3, environment 2.
 
 Known weaknesses, in priority order:
 
