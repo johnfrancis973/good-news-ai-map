@@ -19,6 +19,37 @@ if (!isSupabaseConfigured && import.meta.env.DEV) {
   );
 }
 
-export const supabase = createClient(url ?? "http://localhost", key ?? "anon", {
+/**
+ * Supabase's newer API keys (`sb_publishable_…` / `sb_secret_…`) are opaque
+ * strings, not JWTs. supabase-js still sends them as `Authorization: Bearer …`,
+ * which this project's gateway rejects, so the header has to be dropped and the
+ * key passed via `apikey` alone. Legacy JWT anon keys are unaffected.
+ */
+function isOpaqueApiKey(value: string): boolean {
+  return value.startsWith("sb_publishable_") || value.startsWith("sb_secret_");
+}
+
+function supabaseFetch(apiKey: string): typeof fetch {
+  return (input, init) => {
+    const headers = new Headers(
+      typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined,
+    );
+    if (init?.headers) {
+      new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+    }
+
+    if (isOpaqueApiKey(apiKey) && headers.get("Authorization") === `Bearer ${apiKey}`) {
+      headers.delete("Authorization");
+    }
+    headers.set("apikey", apiKey);
+
+    return fetch(input, { ...init, headers });
+  };
+}
+
+const anonKey = key ?? "anon";
+
+export const supabase = createClient(url ?? "http://localhost", anonKey, {
   auth: { persistSession: false },
+  global: { fetch: supabaseFetch(anonKey) },
 });
