@@ -76,7 +76,10 @@ export const PRESETS = {
       "ny1.com",
       "brooklyneagle.com",
       "nyc.gov",
-      "nytimes.com",
+      "silive.com",
+      "qns.com",
+      "bkreader.com",
+      "thecity.nyc",
     ],
   },
   reykjavik: {

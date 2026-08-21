@@ -49,6 +49,10 @@ const DOMAIN_BLOCKLIST = [
   "subventions.fr", "societe.com", "infogreffe.fr", "annuaire",
   "demarche.numerique.gouv.fr", "journal-officiel.gouv.fr", "net-entreprises.fr",
   "linternaute.com", "yelp.", "indeed.", "leboncoin.fr",
+  // Firecrawl returns 403 "we do not support this site" for these, so every
+  // candidate from them wastes a rate-limited request and yields nothing.
+  "nytimes.com", "wsj.com", "ft.com", "bloomberg.com", "washingtonpost.com",
+  "economist.com", "newyorker.com", "reuters.com",
 ];
 
 const TRACKING_PARAMS = [
@@ -86,9 +90,25 @@ REJECT the article (accepted=false) if ANY of these is true:
 - it is unsupported opinion or a column with no reported event
 - it is irrelevant to the target geography given below
 - it is a directory, listing, index page, paywall stub, cookie notice or navigation shell
-- it is a call for projects, grant announcement or tender rather than a reported outcome
+- it is a call for projects, grant announcement, funding programme, scheme
+  landing page or tender rather than a reported outcome
+- it is a standing service, programme or policy page on an official site rather
+  than a report of something that happened on a specific occasion
+- it is a consultation, impact assessment, strategy document or plan that has
+  not yet produced a result
+- it is celebrity, royal, sports-transfer or personality news with no
+  constructive outcome for the local community
+- it is a memorial, vigil, obituary or tribute following a death, however
+  moving the community response was
+- it is a global ranking, index or listicle that merely mentions the target
+  place among many others
+- it is primarily promotional coverage of a commercial attraction or product
 - the content is too thin to summarise confidently
 - source credibility or content quality is too weak
+
+A REPORTED EVENT HAS A WHEN. If you cannot point to something that happened -
+an opening, a completion, a result, an award, a launch that already occurred -
+then this is not a story for this map, however worthy the underlying programme.
 
 GEOGRAPHY IS A HARD FILTER. If the event did not happen in or directly concern
 the target geography, reject it, even if the story is excellent. A story about a
