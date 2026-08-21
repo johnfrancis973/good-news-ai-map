@@ -49,9 +49,10 @@ src/lib/queries.ts                    read path — Postgres only
 src/pages/{Home,Explore,StoryDetail}  the three screens
 src/components/StoryMap.tsx           react-leaflet + OSM
 supabase/migrations/0001_init.sql     schema, RLS, RPCs
-supabase/functions/ingest-location/   write path (Firecrawl + OpenAI)
+supabase/functions/ingest-location/   write path: pipeline.js (shared) + index.ts (HTTP)
 supabase/functions/geocode/           Nominatim proxy, no keys
-scripts/ingest.mjs                    operator CLI for the write path
+scripts/ingest.mjs                    operator CLI -> deployed edge function
+scripts/ingest-local.mjs              same pipeline, run locally
 ```
 
 ---
@@ -98,14 +99,24 @@ npm run dev
 
 ### 4. Ingest a location (Loop A)
 
+Against the deployed edge function:
+
 ```sh
 node scripts/ingest.mjs --preset cayenne
 node scripts/ingest.mjs "Cayenne" 4.9227 -52.3269 --radius 150 --cc gf
 node scripts/ingest.mjs --status <job_id>
 ```
 
-The script returns a `job_id` immediately and then polls the job row. Browsing
-the site during ingestion is completely unaffected.
+Or run the identical pipeline from this machine, which needs no deployed
+function:
+
+```sh
+node scripts/ingest-local.mjs --preset cayenne
+```
+
+Both paths import the same `supabase/functions/ingest-location/pipeline.js`, so
+they cannot drift apart. Either way, browsing the site during ingestion is
+completely unaffected.
 
 ---
 

@@ -109,22 +109,6 @@ export function useRateStory(storyId: string | undefined) {
   });
 }
 
-/**
- * Resolve a free-text place name. Tries known locations first (instant, no
- * network beyond Postgres); falls back to the Nominatim proxy edge function.
- * This never triggers ingestion and never calls Firecrawl or OpenAI.
- */
-export async function geocodePlace(query: string): Promise<
-  Array<{ name: string; latitude: number; longitude: number; country: string | null }>
-> {
-  const { data, error } = await supabase.functions.invoke("geocode", {
-    body: { query },
-  });
-  if (error) return [];
-  return (data?.results ?? []) as Array<{
-    name: string;
-    latitude: number;
-    longitude: number;
-    country: string | null;
-  }>;
-}
+// Place lookup lives in ./geocode, re-exported here so callers have one import.
+export { geocodePlace } from "./geocode";
+export type { GeocodeHit } from "./geocode";
