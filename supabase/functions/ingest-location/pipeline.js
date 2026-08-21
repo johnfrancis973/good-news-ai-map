@@ -4,11 +4,12 @@
 // Firecrawl Scrape -> OpenAI validation/enrichment -> Postgres.
 //
 // Deliberately plain JavaScript using only `fetch` and a Supabase client passed
-// in as an argument, so the exact same code runs in two places with no forked
-// logic: the Deno edge function (../ingest-location/index.ts) and the local
-// Node runner (scripts/ingest-local.mjs).
+// in as an argument, so the same code runs unchanged in the Deno edge function
+// (./index.ts), the local Node runner (scripts/ingest-local.mjs) and the offline
+// harvester (scripts/harvest.mjs).
 //
-// This is slow (15-40s+) and is NEVER on a user's browsing request path.
+// This is slow (minutes, not seconds — see RATE LIMITS below) and is NEVER on a
+// user's browsing request path.
 
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v2";
 const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
@@ -17,9 +18,16 @@ const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const USER_AGENT = "GoodNewsAIMap/1.0 (hackathon MVP)";
 
 export const MAX_CANDIDATES = 20;
-const SCRAPE_CONCURRENCY = 3;
 const MAX_MARKDOWN_CHARS = 8000;
 const MIN_CONFIDENCE = 0.6;
+
+// RATE LIMITS. Measured against the live account: Firecrawl returns HTTP 429
+// at ~10 requests/minute. Exceeding it fails every subsequent call for the rest
+// of the window, so requests are serialised through a token bucket rather than
+// fired concurrently. A full run is therefore minutes long — which is fine,
+// because nothing user-facing waits on it.
+const FIRECRAWL_RPM = 8;
+const MAX_RETRIES = 4;
 
 export const CATEGORIES = [
   "environment",
@@ -30,12 +38,17 @@ export const CATEGORIES = [
   "other",
 ];
 
-// Domains that never yield a citable single article.
+// Sites that are never a single citable story: social, directories, registries,
+// listings, grant portals, yellow pages. Found the hard way by probing Cayenne.
 const DOMAIN_BLOCKLIST = [
   "facebook.com", "instagram.com", "x.com", "twitter.com", "tiktok.com",
   "youtube.com", "youtu.be", "pinterest.com", "linkedin.com", "reddit.com",
   "amazon.", "ebay.", "tripadvisor.", "booking.com", "wikipedia.org",
   "google.com", "news.google.com", "bing.com", "yahoo.com",
+  "pagesjaunes.fr", "cerfapp.fr", "helloasso.com", "pappers.fr",
+  "subventions.fr", "societe.com", "infogreffe.fr", "annuaire",
+  "demarche.numerique.gouv.fr", "journal-officiel.gouv.fr", "net-entreprises.fr",
+  "linternaute.com", "yelp.", "indeed.", "leboncoin.fr",
 ];
 
 const TRACKING_PARAMS = [
@@ -43,17 +56,19 @@ const TRACKING_PARAMS = [
   "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "source", "amp",
 ];
 
+// Event-shaped phrasing beats topic-shaped phrasing: searching "environmental
+// progress" returns directories and policy pages, searching "inaugurates" and
+// "launches" returns reported events.
 const THEMES = [
-  { en: "community initiative",      fr: "initiative associative locale" },
-  { en: "environmental progress",    fr: "projet environnemental reussite" },
-  { en: "education success",         fr: "reussite educative ecole" },
-  { en: "health progress",           fr: "progres sante initiative" },
-  { en: "innovation local project",  fr: "innovation projet local" },
-  { en: "conservation biodiversity", fr: "conservation biodiversite" },
-  { en: "local improvement project", fr: "amelioration cadre de vie projet" },
+  { en: "opens new community project",     fr: "inaugure nouveau projet local" },
+  { en: "launches environmental project",  fr: "lance projet environnemental" },
+  { en: "school students win project",     fr: "eleves ecole projet reussite" },
+  { en: "new health facility opens",       fr: "nouvelle structure sante ouvre" },
+  { en: "local innovation startup wins",   fr: "innovation locale entreprise prix" },
+  { en: "conservation species protected",  fr: "protection espece conservation" },
+  { en: "association awarded volunteers",  fr: "association recompensee benevoles" },
 ];
 
-// Regions where French-language sources dominate.
 const FRENCH_HINTS = [
   "guyane", "cayenne", "kourou", "france", "paris", "martinique",
   "guadeloupe", "reunion", "mayotte", "lyon", "marseille", "bordeaux",
@@ -70,9 +85,14 @@ REJECT the article (accepted=false) if ANY of these is true:
 - it is advertising, PR or marketing disguised as news
 - it is unsupported opinion or a column with no reported event
 - it is irrelevant to the target geography given below
+- it is a directory, listing, index page, paywall stub, cookie notice or navigation shell
+- it is a call for projects, grant announcement or tender rather than a reported outcome
 - the content is too thin to summarise confidently
 - source credibility or content quality is too weak
-- the text is an index page, paywall stub, cookie notice or navigation shell
+
+GEOGRAPHY IS A HARD FILTER. If the event did not happen in or directly concern
+the target geography, reject it, even if the story is excellent. A story about a
+different region that merely uses similar words is a rejection.
 
 ABSOLUTE ANTI-FABRICATION RULE.
 Never invent people, organisations, numbers, statistics, dates, quotations,
@@ -101,7 +121,7 @@ WHEN ACCEPTED, produce:
 - published_date: ISO 8601 date of publication if clearly present. Otherwise null.
 - source_name: the publication/outlet name if identifiable. Otherwise null.
 - confidence: 0..1, your honest confidence that this is a real, verifiable,
-  constructive story from a credible source.
+  constructive story from a credible source, in the target geography.
 
 Write in English regardless of the article's language.`;
 
@@ -131,6 +151,68 @@ const DECISION_SCHEMA = {
   },
 };
 
+// ---------------------------------------------------------------- rate limit
+
+/** Serialising token bucket. Firecrawl 429s hard, so we never burst past it. */
+class RateLimiter {
+  constructor(perMinute) {
+    this.intervalMs = Math.ceil(60000 / perMinute);
+    this.next = 0;
+  }
+  async take() {
+    const now = Date.now();
+    const at = Math.max(now, this.next);
+    this.next = at + this.intervalMs;
+    if (at > now) await new Promise((r) => setTimeout(r, at - now));
+  }
+}
+
+const firecrawlLimiter = new RateLimiter(FIRECRAWL_RPM);
+
+async function firecrawlFetch(path, body, log) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    await firecrawlLimiter.take();
+
+    let res;
+    try {
+      res = await fetch(`${FIRECRAWL_BASE}${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${body.__key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...body, __key: undefined }),
+      });
+    } catch (err) {
+      if (attempt === MAX_RETRIES) throw err;
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      continue;
+    }
+
+    if (res.status === 429 || res.status >= 500) {
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : Math.min(60000, 5000 * Math.pow(2, attempt));
+      if (attempt === MAX_RETRIES) {
+        log(`giving up after ${MAX_RETRIES} retries (HTTP ${res.status}) on ${path}`);
+        return null;
+      }
+      log(`HTTP ${res.status} on ${path}, backing off ${Math.round(waitMs / 1000)}s`);
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+
+    if (!res.ok) {
+      log(`HTTP ${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+
+    return res.json();
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- helpers
 
 // Combining diacritical marks, built from char codes so this file stays pure
@@ -149,7 +231,7 @@ export function normalizeName(s) {
     .replace(/^-|-$/g, "");
 }
 
-function normalizeUrl(raw) {
+export function normalizeUrl(raw) {
   try {
     const u = new URL(raw);
     if (u.protocol !== "http:" && u.protocol !== "https:") return null;
@@ -170,6 +252,19 @@ function isBlocked(url) {
   return DOMAIN_BLOCKLIST.some((d) => lower.includes(d));
 }
 
+/** Article-shaped URLs have a dated path or a multi-word slug. */
+function looksLikeArticle(url) {
+  try {
+    const p = new URL(url).pathname;
+    if (/\.(pdf|jpg|png|zip|doc|docx)$/i.test(p)) return false;
+    if (/\/\d{4}\/\d{2}\//.test(p)) return true;
+    const slug = p.split("/").filter(Boolean).pop() ?? "";
+    return slug.split("-").length >= 4;
+  } catch {
+    return false;
+  }
+}
+
 function usesFrench(location) {
   const n = normalizeName(location);
   return FRENCH_HINTS.some((h) => n.includes(h));
@@ -184,7 +279,7 @@ function firstString(v) {
   return null;
 }
 
-function toIso(value) {
+export function toIso(value) {
   const s = firstString(value);
   if (!s) return null;
   const d = new Date(s);
@@ -194,9 +289,8 @@ function toIso(value) {
   return d.toISOString();
 }
 
-// Deterministic small offset so several stories sharing a fallback centre do
-// not stack into one unclickable marker.
-function jitter(seed, index) {
+/** Deterministic offset so stories sharing a fallback centre stay clickable. */
+export function jitter(seed, index) {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
   const angle = ((Math.abs(h) % 360) + index * 47) * (Math.PI / 180);
@@ -204,68 +298,87 @@ function jitter(seed, index) {
   return [Math.sin(angle) * radius, Math.cos(angle) * radius];
 }
 
-async function pool(items, limit, fn) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    for (;;) {
-      const i = cursor++;
-      if (i >= items.length) return;
-      results[i] = await fn(items[i], i);
+// ---------------------------------------------------------------- search
+
+/**
+ * Two passes, cheapest-signal first:
+ *   1. news source restricted to the region's own outlets — highest precision
+ *   2. news source across the open web — recall, geography enforced by the model
+ * The web source type is only a last resort: probing showed it returns
+ * directories and grant portals rather than reported events.
+ */
+export async function searchCandidates(firecrawlKey, payload, log) {
+  const locationName = payload.location;
+  const french = usesFrench(locationName);
+  const outlets = payload.outlets ?? [];
+  const shortName = locationName.split(",")[0].trim();
+
+  const themes = payload.queries?.length
+    ? payload.queries.slice(0, 8)
+    : THEMES.map((t) => `${shortName} ${french ? t.fr : t.en}`);
+
+  const passes = [];
+  if (outlets.length > 0) {
+    passes.push({ label: "news+outlets", opts: { sources: [{ type: "news" }], includeDomains: outlets } });
+  }
+  passes.push({ label: "news", opts: { sources: [{ type: "news" }] } });
+
+  const seen = new Map();
+  const queriesRun = [];
+
+  for (const pass of passes) {
+    for (const query of themes) {
+      queriesRun.push(`[${pass.label}] ${query}`);
+      const body = {
+        __key: firecrawlKey,
+        query,
+        limit: 10,
+        tbs: "qdr:y",
+        ...pass.opts,
+      };
+      const json = await firecrawlFetch("/search", body, log);
+      if (!json) continue;
+
+      const rows = Array.isArray(json?.data)
+        ? json.data
+        : (json?.data?.news ?? json?.data?.web ?? []);
+      if (!Array.isArray(rows)) continue;
+
+      let kept = 0;
+      for (const r of rows) {
+        const url = normalizeUrl(typeof r?.url === "string" ? r.url : "");
+        if (!url || seen.has(url) || isBlocked(url)) continue;
+        if (!looksLikeArticle(url)) continue;
+        seen.set(url, { url, title: firstString(r?.title), pass: pass.label });
+        kept++;
+      }
+      log(`${pass.label}: ${rows.length} results, ${kept} new  <- ${query}`);
     }
-  });
-  await Promise.all(workers);
-  return results;
-}
 
-// ---------------------------------------------------------------- Firecrawl
-
-async function firecrawlSearch(apiKey, query, limit, log) {
-  const res = await fetch(`${FIRECRAWL_BASE}/search`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, limit, sources: [{ type: "web" }], tbs: "qdr:y" }),
-  });
-
-  if (!res.ok) {
-    log(`search failed (${res.status}) for "${query}": ${(await res.text()).slice(0, 200)}`);
-    return [];
+    // Enough precision from the outlet pass alone? Skip the broad pass.
+    if (seen.size >= (payload.max_candidates ?? MAX_CANDIDATES)) break;
   }
 
-  const body = await res.json();
-  // v2 returns { data: { web: [...] } }; tolerate a bare array too.
-  const rows = Array.isArray(body?.data)
-    ? body.data
-    : (body?.data?.web ?? body?.data?.news ?? []);
-  if (!Array.isArray(rows)) return [];
-
-  return rows
-    .map((r) => ({
-      url: typeof r?.url === "string" ? r.url : "",
-      title: firstString(r?.title),
-    }))
-    .filter((r) => r.url.length > 0);
+  return { candidates: [...seen.values()], queriesRun };
 }
 
-async function firecrawlScrape(apiKey, url, log) {
-  const res = await fetch(`${FIRECRAWL_BASE}/scrape`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
+// ---------------------------------------------------------------- scrape
+
+export async function scrapeArticle(firecrawlKey, url, log) {
+  const json = await firecrawlFetch(
+    "/scrape",
+    {
+      __key: firecrawlKey,
       url,
       formats: ["markdown"],
       onlyMainContent: true,
       timeout: 30000,
-    }),
-  });
+    },
+    log,
+  );
+  if (!json) return null;
 
-  if (!res.ok) {
-    log(`scrape failed (${res.status}): ${url}`);
-    return null;
-  }
-
-  const body = await res.json();
-  const data = body?.data ?? {};
+  const data = json?.data ?? {};
   const md = typeof data?.markdown === "string" ? data.markdown : "";
   if (md.trim().length < 400) return null; // too thin to summarise honestly
 
@@ -285,12 +398,12 @@ async function firecrawlScrape(apiKey, url, log) {
   };
 }
 
-// ---------------------------------------------------------------- OpenAI
+// ---------------------------------------------------------------- enrich
 
-async function enrich(apiKey, args, log) {
+export async function enrichArticle(openaiKey, args, log) {
   const res = await fetch(OPENAI_URL, {
     method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: OPENAI_MODEL,
       temperature: 0.2,
@@ -329,9 +442,24 @@ async function enrich(apiKey, args, log) {
   }
 }
 
+/** Rejects on the model's verdict, low confidence, or structural incompleteness. */
+export function verdictFor(decision) {
+  if (!decision) return { ok: false, reason: "enrichment failed" };
+  if (!decision.accepted) {
+    return { ok: false, reason: decision.rejection_reason ?? "rejected by validator" };
+  }
+  if (!(decision.confidence >= MIN_CONFIDENCE)) {
+    return { ok: false, reason: `confidence ${decision.confidence} below ${MIN_CONFIDENCE}` };
+  }
+  if (!decision.summary || !decision.why_it_matters || !decision.actions?.length) {
+    return { ok: false, reason: "incomplete enrichment output" };
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------- geocoding
 
-async function geocode(place, countryCode) {
+export async function geocode(place, countryCode) {
   try {
     const params = new URLSearchParams({ q: place, format: "json", limit: "1" });
     if (countryCode) params.set("countrycodes", String(countryCode).toLowerCase());
@@ -349,6 +477,48 @@ async function geocode(place, countryCode) {
   } catch {
     return null;
   }
+}
+
+/** Builds the persisted column set. The scraped markdown is NOT part of it. */
+export async function buildStoryRow(decision, scraped, item, payload, index) {
+  let lat = payload.latitude;
+  let lng = payload.longitude;
+  let placeName = payload.location;
+
+  if (decision.location_hint) {
+    const hit = await geocode(decision.location_hint, payload.country_code ?? null);
+    if (hit) {
+      lat = hit.lat;
+      lng = hit.lng;
+      placeName = decision.location_hint;
+    }
+  }
+  if (lat === payload.latitude && lng === payload.longitude) {
+    const [dLat, dLng] = jitter(item.url, index);
+    lat += dLat;
+    lng += dLng;
+  }
+
+  return {
+    title: scraped.title ?? item.title ?? item.url,
+    source_url: item.url,
+    source_name: decision.source_name ?? scraped.sourceName ?? new URL(item.url).hostname,
+    published_at: toIso(decision.published_date) ?? scraped.publishedAt,
+    location_name: placeName,
+    latitude: lat,
+    longitude: lng,
+    category: CATEGORIES.includes(decision.category) ? decision.category : "other",
+    summary: decision.summary,
+    why_it_matters: decision.why_it_matters,
+    lessons: (decision.lessons ?? []).slice(0, 3),
+    actions: decision.actions.slice(0, 3),
+    future_outlook: decision.future_outlook,
+    ai_relevance: decision.ai_relevance === true && Boolean(decision.ai_outlook),
+    ai_outlook: decision.ai_relevance === true ? decision.ai_outlook : null,
+    image_url: scraped.imageUrl,
+    confidence_score: decision.confidence,
+    status: "published",
+  };
 }
 
 // ---------------------------------------------------------------- setup
@@ -382,9 +552,7 @@ export async function createJob(supabase, payload) {
     .select("id")
     .single();
 
-  if (jobError || !job) {
-    throw new Error(`could not create job: ${jobError?.message}`);
-  }
+  if (jobError || !job) throw new Error(`could not create job: ${jobError?.message}`);
 
   return { jobId: job.id, locationId: location.id };
 }
@@ -396,51 +564,44 @@ async function reject(supabase, storyId, reason) {
     .eq("id", storyId);
 }
 
+async function finish(supabase, jobId, status, stats, errorMessage) {
+  await supabase
+    .from("ingestion_jobs")
+    .update({
+      status,
+      candidates_found: stats.found,
+      candidates_processed: stats.processed,
+      stories_published: stats.published,
+      stories_rejected: stats.rejected,
+      error_message: errorMessage ?? null,
+      finished_at: new Date().toISOString(),
+    })
+    .eq("id", jobId);
+}
+
 // ---------------------------------------------------------------- pipeline
 
 export async function runPipeline(supabase, keys, payload, jobId, locationId, logger) {
   const log = logger ?? ((m) => console.log(m));
   const stats = { found: 0, processed: 0, published: 0, rejected: 0 };
-  const locationName = payload.location;
   const maxCandidates = Math.min(payload.max_candidates ?? MAX_CANDIDATES, 40);
 
   try {
-    // --- STEP 1: Firecrawl Search -------------------------------------
+    // --- STEP 1+2: search and collect candidates ----------------------
     await supabase
       .from("ingestion_jobs")
       .update({ status: "searching", started_at: new Date().toISOString() })
       .eq("id", jobId);
 
-    const french = usesFrench(locationName);
-    const queries = payload.queries?.length
-      ? payload.queries.slice(0, 8)
-      : THEMES.map((t) => `${locationName} ${french ? t.fr : t.en}`);
-
-    log(`searching ${queries.length} queries (${french ? "fr" : "en"})`);
-    const searchResults = await pool(queries, 3, (q) =>
-      firecrawlSearch(keys.firecrawl, q, 8, log),
-    );
-
-    // --- STEP 2: candidate URLs ---------------------------------------
-    const seen = new Set();
-    const candidates = [];
-    for (const batch of searchResults) {
-      for (const hit of batch ?? []) {
-        const url = normalizeUrl(hit.url);
-        if (!url || seen.has(url) || isBlocked(url)) continue;
-        seen.add(url);
-        candidates.push({ url, title: hit.title });
-      }
-    }
-
+    const { candidates, queriesRun } = await searchCandidates(keys.firecrawl, payload, log);
     stats.found = candidates.length;
-    log(`${stats.found} unique candidate URLs`);
+    log(`${stats.found} unique article-shaped candidates`);
 
     await supabase
       .from("ingestion_jobs")
       .update({
         status: "processing",
-        search_query: queries.join(" | "),
+        search_query: queriesRun.join(" | ").slice(0, 4000),
         candidates_found: stats.found,
       })
       .eq("id", jobId);
@@ -451,7 +612,7 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
     }
 
     // --- STEP 3: DEDUPLICATE BEFORE SCRAPING --------------------------
-    // A URL we already hold must never cost a Firecrawl scrape or a model call.
+    // A URL we already hold must never cost a scrape or a model call.
     const { data: existing } = await supabase
       .from("stories")
       .select("source_url")
@@ -477,7 +638,7 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
           title: c.title ?? c.url,
           source_url: c.url,
           location_id: locationId,
-          location_name: locationName,
+          location_name: payload.location,
           latitude: payload.latitude,
           longitude: payload.longitude,
           status: "processing",
@@ -490,103 +651,52 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
     }
 
     // --- STEPS 4+5: scrape, then validate/enrich ----------------------
-    await pool(claimed, SCRAPE_CONCURRENCY, async (item, index) => {
+    // Serial, because Firecrawl rate-limits aggressively.
+    for (let index = 0; index < claimed.length; index++) {
+      const item = claimed[index];
       try {
-        const scraped = await firecrawlScrape(keys.firecrawl, item.url, log);
+        const scraped = await scrapeArticle(keys.firecrawl, item.url, log);
         if (!scraped) {
           await reject(supabase, item.id, "scrape produced no usable content");
           stats.rejected++;
-          return;
+          continue;
         }
 
-        const decision = await enrich(
+        const decision = await enrichArticle(
           keys.openai,
           {
             url: item.url,
             title: scraped.title ?? item.title,
             markdown: scraped.markdown,
-            locationName,
+            locationName: payload.location,
           },
           log,
         );
 
-        if (!decision) {
-          await reject(supabase, item.id, "enrichment failed");
+        const verdict = verdictFor(decision);
+        if (!verdict.ok) {
+          await reject(supabase, item.id, verdict.reason);
           stats.rejected++;
-          return;
+          log(`rejected: ${verdict.reason.slice(0, 90)}`);
+          continue;
         }
 
-        if (!decision.accepted || decision.confidence < MIN_CONFIDENCE) {
-          await reject(
-            supabase,
-            item.id,
-            decision.rejection_reason ??
-              `confidence ${decision.confidence} below ${MIN_CONFIDENCE}`,
-          );
-          stats.rejected++;
-          return;
-        }
+        const row = await buildStoryRow(decision, scraped, item, payload, index);
+        delete row.source_url; // already set when the row was claimed
 
-        // Refuse to publish a structurally incomplete story.
-        if (!decision.summary || !decision.why_it_matters || !decision.actions?.length) {
-          await reject(supabase, item.id, "incomplete enrichment output");
-          stats.rejected++;
-          return;
-        }
-
-        // Coordinates: prefer the place actually named in the article.
-        let lat = payload.latitude;
-        let lng = payload.longitude;
-        let placeName = locationName;
-        if (decision.location_hint) {
-          const hit = await geocode(decision.location_hint, payload.country_code ?? null);
-          if (hit) {
-            lat = hit.lat;
-            lng = hit.lng;
-            placeName = decision.location_hint;
-          }
-        }
-        if (lat === payload.latitude && lng === payload.longitude) {
-          const [dLat, dLng] = jitter(item.url, index);
-          lat += dLat;
-          lng += dLng;
-        }
-
-        // Only our own generated content plus source metadata is persisted.
-        // The scraped markdown is discarded when this closure returns.
         const { error: updateError } = await supabase
           .from("stories")
-          .update({
-            title: scraped.title ?? item.title ?? item.url,
-            source_name:
-              decision.source_name ?? scraped.sourceName ?? new URL(item.url).hostname,
-            published_at: toIso(decision.published_date) ?? scraped.publishedAt,
-            location_name: placeName,
-            latitude: lat,
-            longitude: lng,
-            category: CATEGORIES.includes(decision.category) ? decision.category : "other",
-            summary: decision.summary,
-            why_it_matters: decision.why_it_matters,
-            lessons: (decision.lessons ?? []).slice(0, 3),
-            actions: decision.actions.slice(0, 3),
-            future_outlook: decision.future_outlook,
-            ai_relevance: decision.ai_relevance === true && Boolean(decision.ai_outlook),
-            ai_outlook: decision.ai_relevance === true ? decision.ai_outlook : null,
-            image_url: scraped.imageUrl,
-            confidence_score: decision.confidence,
-            rejection_reason: null,
-            status: "published",
-          })
+          .update({ ...row, rejection_reason: null })
           .eq("id", item.id);
 
         if (updateError) {
           await reject(supabase, item.id, `publish failed: ${updateError.message}`);
           stats.rejected++;
-          return;
+          continue;
         }
 
         stats.published++;
-        log(`published: ${(scraped.title ?? item.url).slice(0, 70)}`);
+        log(`published: ${String(row.title).slice(0, 70)}`);
       } catch (err) {
         // Any failure leaves the row non-public.
         await reject(supabase, item.id, `error: ${String(err).slice(0, 300)}`);
@@ -602,7 +712,7 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
           })
           .eq("id", jobId);
       }
-    });
+    }
 
     await finish(supabase, jobId, "completed", stats);
     await supabase
@@ -616,19 +726,4 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
     await finish(supabase, jobId, "failed", stats, String(err).slice(0, 1000));
     return stats;
   }
-}
-
-async function finish(supabase, jobId, status, stats, errorMessage) {
-  await supabase
-    .from("ingestion_jobs")
-    .update({
-      status,
-      candidates_found: stats.found,
-      candidates_processed: stats.processed,
-      stories_published: stats.published,
-      stories_rejected: stats.rejected,
-      error_message: errorMessage ?? null,
-      finished_at: new Date().toISOString(),
-    })
-    .eq("id", jobId);
 }

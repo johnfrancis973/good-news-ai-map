@@ -16,6 +16,17 @@ export const PRESETS = {
     radius_km: 150,
     country: "French Guiana",
     country_code: "gf",
+    outlets: [
+      "la1ere.franceinfo.fr",
+      "la1ere.francetvinfo.fr",
+      "franceguyane.fr",
+      "guyaweb.com",
+      "outremers360.com",
+      "radiopeyi.com",
+      "univ-guyane.fr",
+      "ctguyane.fr",
+      "guyane.gouv.fr",
+    ],
   },
   paris: {
     location: "Paris, France",
@@ -24,6 +35,15 @@ export const PRESETS = {
     radius_km: 40,
     country: "France",
     country_code: "fr",
+    outlets: [
+      "leparisien.fr",
+      "francebleu.fr",
+      "actu.fr",
+      "20minutes.fr",
+      "lemonde.fr",
+      "franceinfo.fr",
+      "paris.fr",
+    ],
   },
   london: {
     location: "London, United Kingdom",
@@ -32,6 +52,14 @@ export const PRESETS = {
     radius_km: 40,
     country: "United Kingdom",
     country_code: "gb",
+    outlets: [
+      "standard.co.uk",
+      "bbc.co.uk",
+      "mylondon.news",
+      "london.gov.uk",
+      "theguardian.com",
+      "timeout.com",
+    ],
   },
   newyork: {
     location: "New York, United States",
@@ -40,6 +68,14 @@ export const PRESETS = {
     radius_km: 40,
     country: "United States",
     country_code: "us",
+    outlets: [
+      "gothamist.com",
+      "amny.com",
+      "ny1.com",
+      "brooklyneagle.com",
+      "nyc.gov",
+      "nytimes.com",
+    ],
   },
   reykjavik: {
     location: "Reykjavik, Iceland",
@@ -48,6 +84,13 @@ export const PRESETS = {
     radius_km: 80,
     country: "Iceland",
     country_code: "is",
+    outlets: [
+      "icelandmonitor.mbl.is",
+      "ruv.is",
+      "icelandreview.com",
+      "grapevine.is",
+      "visir.is",
+    ],
   },
 };
 
@@ -73,7 +116,7 @@ function parseEnvFile(file) {
   return out;
 }
 
-export function loadIngestConfig({ requireAdminToken = true } = {}) {
+export function loadIngestConfig({ requireAdminToken = true, requireDatabase = true } = {}) {
   const env = parseEnvFile(".env.ingest");
   const front = parseEnvFile(".env.local");
 
@@ -86,8 +129,8 @@ export function loadIngestConfig({ requireAdminToken = true } = {}) {
   };
 
   const missing = [];
-  if (!cfg.supabaseUrl) missing.push("SUPABASE_URL (or VITE_SUPABASE_URL in .env.local)");
-  if (!cfg.serviceKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+  if (requireDatabase && !cfg.supabaseUrl) missing.push("SUPABASE_URL (or VITE_SUPABASE_URL in .env.local)");
+  if (requireDatabase && !cfg.serviceKey) missing.push("SUPABASE_SERVICE_ROLE_KEY");
   if (requireAdminToken && !cfg.adminToken) missing.push("INGEST_ADMIN_TOKEN");
   if (missing.length) {
     die(`Missing in .env.ingest:\n    - ${missing.join("\n    - ")}`);
