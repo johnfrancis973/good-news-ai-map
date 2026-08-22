@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Menu, Plus, Search, Sparkle, X } from "lucide-react";
 import { LocationSearch, type Resolved } from "./LocationSearch";
 import { cn, exploreHref, lastExploreHref } from "../lib/utils";
@@ -13,6 +13,8 @@ function navItems() {
   return [
     { to: lastExploreHref(), match: "/explore", label: "Explore" },
     { to: "/submit", match: "/submit", label: "Submit a story" },
+    { to: "/sponsor", match: "/sponsor", label: "Sponsorship" },
+    { to: "/donate", match: "/donate", label: "Donate" },
   ];
 }
 
@@ -22,9 +24,12 @@ export function Header({
 }: {
   className?: string;
   /** Which nav item to mark as the current page. */
-  active?: "explore" | "submit";
+  active?: "explore" | "submit" | "support";
 }) {
   const navigate = useNavigate();
+  // Sponsorship and Donate are two routes behind one page, so the caller
+  // cannot say which of them is current. The path can.
+  const { pathname } = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -60,7 +65,8 @@ export function Header({
             {navItems().map((item) => {
               const isActive =
                 (active === "explore" && item.match === "/explore") ||
-                (active === "submit" && item.match === "/submit");
+                (active === "submit" && item.match === "/submit") ||
+                (active === "support" && item.match === pathname);
               return (
                 <Link
                   key={item.match}
