@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -15,15 +15,17 @@
     --muted: 160 16% 96%;
     --muted-foreground: 200 8% 44%;
 
-    --primary: 168 62% 26%;
+    --primary: 158 64% 28%;
     --primary-foreground: 150 30% 98%;
 
-    --accent: 168 46% 94%;
-    --accent-foreground: 168 62% 22%;
+    --accent: 158 46% 94%;
+    --accent-foreground: 158 64% 22%;
+
+    --destructive: 0 68% 42%;
 
     --border: 165 14% 89%;
     --input: 165 14% 89%;
-    --ring: 168 62% 32%;
+    --ring: 158 64% 34%;
 
     --radius: 0.75rem;
   }
@@ -38,15 +40,17 @@
     --muted: 200 18% 16%;
     --muted-foreground: 190 8% 62%;
 
-    --primary: 168 52% 46%;
+    --primary: 158 52% 46%;
     --primary-foreground: 200 26% 8%;
 
     --accent: 200 20% 18%;
-    --accent-foreground: 168 52% 74%;
+    --accent-foreground: 158 52% 74%;
+
+    --destructive: 0 62% 58%;
 
     --border: 200 16% 20%;
     --input: 200 16% 20%;
-    --ring: 168 52% 46%;
+    --ring: 158 52% 46%;
   }
 
   * {

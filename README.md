@@ -49,12 +49,15 @@ Nominatim (geocoding)
 ```
 src/lib/queries.ts                    read path — Postgres only
 src/pages/{Home,Explore,StoryDetail}  the three screens
+src/pages/Submit.tsx                  public suggestion form -> queue, not the map
 src/components/StoryMap.tsx           react-leaflet + OSM
 supabase/migrations/0001_init.sql     schema, RLS, RPCs
+supabase/migrations/0002_suggestions.sql  the suggestion queue
 supabase/functions/ingest-location/   write path: pipeline.js (shared) + index.ts (HTTP)
 supabase/functions/geocode/           Nominatim proxy, no keys
 scripts/ingest.mjs                    operator CLI -> deployed edge function
 scripts/ingest-local.mjs              same pipeline, run locally
+scripts/suggestions.mjs               read and triage what the public suggested
 ```
 
 ---
@@ -89,8 +92,9 @@ where the edge functions read them from.
 
 ### 2. Database
 
-Apply `supabase/migrations/0001_init.sql` (Lovable MCP `query_database`, or the
-Supabase SQL editor). Already applied on the live project.
+Apply `supabase/migrations/0001_init.sql`, then `0002_suggestions.sql` (Lovable
+MCP `query_database`, or the Supabase SQL editor). Both are already applied on
+the live project.
 
 ### 2b. Check it works
 
@@ -98,8 +102,9 @@ Supabase SQL editor). Already applied on the live project.
 node scripts/verify.mjs
 ```
 
-Twenty acceptance checks against the live API: the read path, every row-level
-security guarantee, and the anonymous rating flow. Exits non-zero on failure.
+Twenty-nine acceptance checks against the live API: the read path, every
+row-level security guarantee, the anonymous rating flow and the suggestion
+queue. Exits non-zero on failure.
 
 ### 3. Run
 
@@ -133,6 +138,19 @@ Both paths import the same `supabase/functions/ingest-location/pipeline.js`, so
 they cannot drift apart. Either way, browsing the site during ingestion is
 completely unaffected.
 
+### 5. Triage what the public suggested
+
+`/submit` lets a visitor send in a link. It reaches a queue, never the site.
+
+```sh
+node scripts/suggestions.mjs                    # everything still 'new'
+node scripts/suggestions.mjs --mark <id> harvested
+```
+
+Needs `SUPABASE_SERVICE_ROLE_KEY`: the publishable key cannot read that table,
+which is the point. Harvesting a suggestion means running it through the same
+pipeline as everything else — a suggestion is a lead, not a story.
+
 ---
 
 ## Guarantees
@@ -146,9 +164,14 @@ completely unaffected.
   can never become publicly visible.
 - **`source_url` is UNIQUE at database level.** Duplicates are dropped before
   they cost a scrape or a model call.
-- **Public users cannot write.** No insert/update/delete policy exists for the
-  anonymous role on any table. Ratings go through one `SECURITY DEFINER`
-  function with a one-vote-per-session unique index.
+- **Public users cannot write to anything that is displayed.** No
+  insert/update/delete policy exists for the anonymous role on any table. The
+  two permitted writes each go through a single `SECURITY DEFINER` function:
+  ratings (one vote per session, enforced by a unique index) and story
+  suggestions (validated, rate limited, into a table nobody can read back).
+- **A suggestion is not a publication.** `/submit` writes to
+  `story_suggestions`, which no public key can select from. An operator still
+  harvests and validates the article before it can appear anywhere.
 - **Ingestion is gated** behind an admin token, so the public cannot burn
   Firecrawl or OpenAI credits.
 

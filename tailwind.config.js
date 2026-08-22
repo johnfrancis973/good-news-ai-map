@@ -7,6 +7,8 @@ export default {
   theme: {
     container: { center: true, padding: "1.5rem", screens: { "2xl": "1280px" } },
     extend: {
+      // The header CTA needs its full label back before the nav collapses.
+      screens: { xs: "420px" },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -17,10 +19,13 @@ export default {
         card: { DEFAULT: "hsl(var(--card))", foreground: "hsl(var(--card-foreground))" },
         primary: { DEFAULT: "hsl(var(--primary))", foreground: "hsl(var(--primary-foreground))" },
         accent: { DEFAULT: "hsl(var(--accent))", foreground: "hsl(var(--accent-foreground))" },
+        destructive: "hsl(var(--destructive))",
       },
       borderRadius: { lg: "var(--radius)", md: "calc(var(--radius) - 2px)", sm: "calc(var(--radius) - 4px)" },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"],
+        // The one place the display serif is named. Swap it here, nowhere else.
+        display: ["Playfair Display", "ui-serif", "Georgia", "Times New Roman", "serif"],
       },
       keyframes: {
         "fade-up": { from: { opacity: "0", transform: "translateY(8px)" }, to: { opacity: "1", transform: "none" } },

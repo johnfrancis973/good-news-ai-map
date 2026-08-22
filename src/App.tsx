@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Home from "./pages/Home";
 import Explore from "./pages/Explore";
 import StoryDetail from "./pages/StoryDetail";
+import Submit from "./pages/Submit";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/explore" element={<Explore />} />
           <Route path="/story/:id" element={<StoryDetail />} />
+          <Route path="/submit" element={<Submit />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

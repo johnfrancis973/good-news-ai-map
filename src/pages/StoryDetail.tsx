@@ -15,7 +15,7 @@ import {
 import { Footer, Header } from "../components/Layout";
 import { useRateStory, useStory, useStoryRatings } from "../lib/queries";
 import { CATEGORY_COLORS, CATEGORY_LABELS, categoryOf } from "../lib/types";
-import { asStringList, cn, formatDate, getSessionId, hostnameOf } from "../lib/utils";
+import { asStringList, cn, formatDate, getSessionId, hostnameOf, shareUrl } from "../lib/utils";
 
 function Section({
   title,
@@ -49,21 +49,13 @@ export default function StoryDetail() {
   }, [story?.title]);
 
   async function share() {
-    const url = window.location.href;
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: story?.title ?? "Good News AI Map", url });
-        return;
-      } catch {
-        // User dismissed the share sheet — fall through to copying.
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(url);
+    const result = await shareUrl(
+      window.location.href,
+      story?.title ?? "Good News AI Map",
+    );
+    if (result === "copied") {
       setCopied(true);
       setTimeout(() => setCopied(false), 2200);
-    } catch {
-      window.prompt("Copy this link:", url);
     }
   }
 

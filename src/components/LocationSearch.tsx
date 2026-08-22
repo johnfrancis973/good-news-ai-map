@@ -15,6 +15,16 @@ type Props = {
   onResolved: (place: Resolved) => void;
   autoFocus?: boolean;
   size?: "lg" | "md";
+  /** Label on the button inside the field. */
+  action?: string;
+  placeholder?: string;
+  /** Fully rounded field, as the mockup's hero draws it. */
+  pill?: boolean;
+  /**
+   * Raw text as it is typed. The suggestion form needs it so a place the
+   * geocoder cannot resolve can still be submitted as written.
+   */
+  onQueryChange?: (value: string) => void;
 };
 
 /**
@@ -23,7 +33,15 @@ type Props = {
  * Nominatim proxy. Neither path triggers ingestion — selecting a place never
  * makes the user wait on Firecrawl or OpenAI.
  */
-export function LocationSearch({ onResolved, autoFocus, size = "lg" }: Props) {
+export function LocationSearch({
+  onResolved,
+  autoFocus,
+  size = "lg",
+  action = "Explore",
+  placeholder = "Search a city or region",
+  pill = false,
+  onQueryChange,
+}: Props) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [remote, setRemote] = useState<Resolved[]>([]);
@@ -91,6 +109,7 @@ export function LocationSearch({ onResolved, autoFocus, size = "lg" }: Props) {
 
   function pick(place: Resolved) {
     setQuery(place.name);
+    onQueryChange?.(place.name);
     setOpen(false);
     onResolved(place);
   }
@@ -103,16 +122,18 @@ export function LocationSearch({ onResolved, autoFocus, size = "lg" }: Props) {
     <div ref={boxRef} className="relative w-full">
       <div
         className={cn(
-          "flex items-center gap-2 rounded-xl border border-input bg-card shadow-sm transition focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/25",
-          size === "lg" ? "px-4 py-3" : "px-3 py-2",
+          "flex items-center gap-2 border border-input bg-card shadow-sm transition focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/25",
+          pill ? "rounded-full" : "rounded-xl",
+          size === "lg" ? (pill ? "py-2 pl-5 pr-2" : "px-4 py-3") : "px-3 py-2",
         )}
       >
-        <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
         <input
           value={query}
           autoFocus={autoFocus}
           onChange={(e) => {
             setQuery(e.target.value);
+            onQueryChange?.(e.target.value);
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
@@ -120,10 +141,12 @@ export function LocationSearch({ onResolved, autoFocus, size = "lg" }: Props) {
             if (e.key === "Enter") submit();
             if (e.key === "Escape") setOpen(false);
           }}
-          placeholder="Search a city or region"
-          aria-label="Search a city or region"
+          placeholder={placeholder}
+          aria-label={placeholder}
           className={cn(
-            "w-full bg-transparent outline-none placeholder:text-muted-foreground",
+            // The wrapper already draws a focus ring; a second one inside it
+            // just looks like a rendering bug.
+            "w-full bg-transparent outline-none focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground",
             size === "lg" ? "text-base" : "text-sm",
           )}
         />
@@ -133,11 +156,13 @@ export function LocationSearch({ onResolved, autoFocus, size = "lg" }: Props) {
           onClick={submit}
           disabled={suggestions.length === 0}
           className={cn(
-            "shrink-0 rounded-lg bg-primary font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-40",
+            "inline-flex shrink-0 items-center gap-1.5 bg-primary font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-40",
+            pill ? "rounded-full" : "rounded-lg",
             size === "lg" ? "px-4 py-2 text-sm" : "px-3 py-1.5 text-xs",
           )}
         >
-          Explore
+          <Search className={size === "lg" ? "h-3.5 w-3.5" : "h-3 w-3"} />
+          {action}
         </button>
       </div>
 

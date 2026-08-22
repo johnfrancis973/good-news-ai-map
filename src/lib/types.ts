@@ -1,3 +1,13 @@
+import {
+  GraduationCap,
+  HeartPulse,
+  Leaf,
+  Lightbulb,
+  Newspaper,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
+
 export const CATEGORIES = [
   "environment",
   "community",
@@ -26,6 +36,17 @@ export const CATEGORY_COLORS: Record<Category, string> = {
   health: "#c05621",
   innovation: "#0f766e",
   other: "#4a5568",
+};
+
+// One icon per category, used on chips and as the stand-in when a story has no
+// image. Kept beside the colours so the two never drift apart.
+export const CATEGORY_ICONS: Record<Category, LucideIcon> = {
+  environment: Leaf,
+  community: Users,
+  education: GraduationCap,
+  health: HeartPulse,
+  innovation: Lightbulb,
+  other: Newspaper,
 };
 
 export function categoryOf(value: string | null | undefined): Category {
@@ -90,3 +111,11 @@ export type LocationRow = {
 };
 
 export type RatingCounts = { useful: number; not_useful: number };
+
+/** What a visitor sends to the suggestion queue. Never read back. */
+export type Suggestion = {
+  url: string;
+  place: string;
+  submitter?: string;
+  note?: string;
+};

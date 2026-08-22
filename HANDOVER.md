@@ -9,7 +9,7 @@ recalled from memory.
 | **Source** | https://github.com/johnfrancis973/good-news-ai-map (public) |
 | **Database** | Lovable Cloud / Supabase `oskgbaudwjxttfzxzbmx`, PostgreSQL 17.6 |
 | **Lovable project** | `a9b1c62b-8943-42e7-8e7e-ac3f05331fc6` |
-| **Status** | Working end to end. 24 stories, 4 locations, 20/20 checks passing. |
+| **Status** | Working end to end. 24 stories, 4 locations, 29/29 checks passing. |
 
 Run `node scripts/verify.mjs` at any time. It exercises the live API exactly as
 a browser does and exits non-zero if anything is broken.
@@ -101,14 +101,19 @@ coordinates, radius and a list of regional news outlets.
 src/lib/queries.ts                    read path — Postgres only, no external APIs
 src/lib/supabase.ts                   client; strips Bearer for opaque keys (section 7)
 src/pages/{Home,Explore,StoryDetail}  the three screens
+src/pages/Submit.tsx                  suggestion form — writes to a queue, not the map
+src/components/Layout.tsx             header, nav, footer — shared by every page
+src/components/StoryCard.tsx          "row" for the Explore panel, "feature" for the grid
 src/components/StoryMap.tsx           react-leaflet + OpenStreetMap
 supabase/migrations/0001_init.sql     schema, RLS, RPCs
+supabase/migrations/0002_suggestions.sql  suggestion queue + submit_suggestion()
 supabase/functions/ingest-location/
   pipeline.js                         ALL ingestion logic, shared
   index.ts                            HTTP wrapper (not deployed yet)
 scripts/harvest.mjs                   offline collection → JSON
 scripts/ingest-local.mjs              same pipeline, writes to the DB
-scripts/verify.mjs                    20 acceptance checks against the live API
+scripts/suggestions.mjs               read/triage the queue (needs the service key)
+scripts/verify.mjs                    29 acceptance checks against the live API
 scripts/build-pages.mjs               production build + secret guard
 ```
 
@@ -156,13 +161,18 @@ Verified by query against the live database, not assumed.
 | | |
 |---|---|
 | anon can read | published stories, locations |
-| anon can call | `get_nearby_stories`, `get_story_ratings`, `rate_story` |
-| anon **cannot** | create/edit/delete stories, read `ingestion_jobs` or `ratings`, see `processing`/`rejected` rows — all 401 |
+| anon can call | `get_nearby_stories`, `get_story_ratings`, `rate_story`, `submit_suggestion` |
+| anon **cannot** | create/edit/delete stories, read `ingestion_jobs`, `ratings` or `story_suggestions`, see `processing`/`rejected` rows — all 401 |
 
 Two things worth carrying forward:
 
 - **`processing` and `rejected` rows are hidden by an RLS policy filtering on
   status**, not by frontend logic. Incomplete work cannot leak.
+- **`story_suggestions` has zero RLS policies and zero grants.** The only way
+  in is `submit_suggestion()`, a security-definer function that validates the
+  URL and place, caps note length, allows five submissions per session per day,
+  and returns `{"ok":true}` — never an id, never a stored value. There is no
+  read path at all, not even for the person who submitted the row.
 - **Supabase's defaults granted anon `TRUNCATE` on `stories`.** TRUNCATE is
   exempt from row-level security, so the public key could have wiped the table.
   All privileges were revoked and only `SELECT` granted back, including default
@@ -230,6 +240,14 @@ our v3, so it needs a compatibility pass. GitHub Pages is the working target.
 Per the spec: accounts, login, profiles, comments, chatbot, moderation
 dashboard, admin portal, recommendations, translation, continuous crawler,
 gamification, analytics.
+
+**One deliberate addition, August 2026.** The team's landing-page mockup carried
+a "Submit Story" nav item and a "Share Good News" button. Rather than a dead
+link, `/submit` writes to a queue an operator triages from the CLI
+(`scripts/suggestions.mjs`). It is not a moderation dashboard and not a publish
+path: a suggestion is an input to Loop A, exactly like a preset, and the
+article still goes through the same harvest and validation as everything else.
+Nothing a visitor sends can be read back by anyone holding the public key.
 
 ---
 

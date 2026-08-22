@@ -134,6 +134,15 @@ check("anon cannot read ingestion_jobs", jobs.status >= 400, String(jobs.status)
 const ratingRows = await rest("ratings?select=id");
 check("anon cannot read raw ratings", ratingRows.status >= 400, String(ratingRows.status));
 
+const suggRows = await rest("story_suggestions?select=id");
+check("anon cannot read story_suggestions", suggRows.status >= 400, String(suggRows.status));
+
+const suggIns = await rest("story_suggestions", {
+  method: "POST",
+  body: JSON.stringify({ source_url: "https://example.com/x", place: "Nowhere" }),
+});
+check("anon cannot insert into story_suggestions directly", suggIns.status >= 400, String(suggIns.status));
+
 console.log("\n  RATING (the one write the public is allowed)");
 
 if (first) {
@@ -148,6 +157,36 @@ if (first) {
   const bad = await rpc("rate_story", { p_story_id: first.id, p_session_id: sess, p_rating: 7 });
   check("invalid rating is refused", bad.status >= 400, String(bad.status));
 }
+
+console.log("\n  SUGGESTIONS (the other write the public is allowed)");
+
+// These leave rows in story_suggestions, exactly as the rating checks leave
+// rows in ratings. They are marked with a verify- session id.
+const suggSess = "verify-" + Math.random().toString(36).slice(2, 10);
+const suggest = (url, place = "Cayenne, French Guiana") =>
+  rpc("submit_suggestion", {
+    p_url: url,
+    p_place: place,
+    p_submitter: null,
+    p_note: "acceptance check",
+    p_session_id: suggSess,
+  });
+
+const good = await suggest("https://example.com/a-good-thing-happened");
+check("a valid suggestion is accepted", good.status === 200, JSON.stringify(good.body));
+check("a suggestion returns nothing readable", JSON.stringify(good.body ?? {}) === '{"ok":true}',
+  JSON.stringify(good.body));
+
+const notUrl = await suggest("not a url");
+check("a non-URL suggestion is refused", notUrl.status >= 400, String(notUrl.status));
+
+const noPlace = await suggest("https://example.com/b", "");
+check("a suggestion without a place is refused", noPlace.status >= 400, String(noPlace.status));
+
+// One accepted above, four more to reach the limit, then the sixth must fail.
+for (let i = 0; i < 4; i++) await suggest(`https://example.com/fill-${i}`);
+const over = await suggest("https://example.com/over-the-limit");
+check("suggestions are rate limited per session", over.status >= 400, String(over.status));
 
 } // end !apiBlocked
 
