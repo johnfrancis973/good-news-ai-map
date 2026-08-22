@@ -76,6 +76,11 @@ export default function Home() {
               placeholder="Try Mumbai, Cayenne or New York"
               pill
               autoFocus
+              // The hero autofocuses, so a covered-places list would open over
+              // the "jump to" chips below on every page load - and those chips
+              // already are the covered places. The header popover, which only
+              // opens when someone asks for it, is where the list belongs.
+              showCovered={false}
             />
           </div>
 

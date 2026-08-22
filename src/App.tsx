@@ -6,6 +6,7 @@ import StoryDetail from "./pages/StoryDetail";
 import Submit from "./pages/Submit";
 import Support from "./pages/Support";
 import NotFound from "./pages/NotFound";
+import { WelcomeQuote } from "./components/WelcomeQuote";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -30,6 +31,8 @@ export default function App() {
           <Route path="/donate" element={<Support key="donate" intent="donate" />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        {/* Outside Routes: one line per visit, not one per navigation. */}
+        <WelcomeQuote />
       </BrowserRouter>
     </QueryClientProvider>
   );
