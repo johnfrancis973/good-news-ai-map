@@ -123,7 +123,7 @@ export default function Explore() {
                   Search a place to see what is getting better there.
                 </p>
                 <div className="flex flex-wrap justify-center gap-2">
-                  {locations.slice(0, 3).map((l) => (
+                  {locations.map((l) => (
                     <button
                       key={l.id}
                       type="button"
@@ -206,7 +206,7 @@ export default function Explore() {
                   </button>
                 ) : (
                   <div className="flex flex-wrap gap-2">
-                    {locations.slice(0, 6).map((l) => (
+                    {locations.map((l) => (
                       <button
                         key={l.id}
                         type="button"

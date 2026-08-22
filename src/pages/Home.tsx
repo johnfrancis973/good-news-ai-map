@@ -82,7 +82,10 @@ export default function Home() {
           {locations.length > 0 && (
             <div className="flex flex-wrap items-center justify-center gap-2.5">
               <span className="text-[13px] text-forest-muted/80">or jump to</span>
-              {locations.slice(0, 4).map((l) => (
+              {/* Every place that has stories, not a sample of them. The row
+                  wraps; with a handful of locations that is two lines at most,
+                  and a visitor should not have to guess what else exists. */}
+              {locations.map((l) => (
                 <button
                   key={l.id}
                   type="button"
