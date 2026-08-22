@@ -97,9 +97,13 @@ where the edge functions read them from.
 
 Apply `supabase/migrations/0001_init.sql`, then `0002_suggestions.sql` (Lovable
 MCP `query_database`, or the Supabase SQL editor). Both are already applied on
-the live project. `0003_suggestion_verification.sql` is **not yet applied** —
-apply it the same way, then deploy `supabase/functions/submit-suggestion`, or
-`/submit` will keep writing to the queue without checking anything.
+the live project, as is `0003_suggestion_verification.sql` (applied
+2026-08-22).
+
+`supabase/functions/submit-suggestion` is **not yet deployed**, so `/submit`
+still only queues. Deploy it before publishing a frontend built from this
+commit — the new bundle calls that function, and until it exists every
+submission 404s. See HANDOVER section 9.
 
 ### 2b. Check it works
 

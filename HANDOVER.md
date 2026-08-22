@@ -9,7 +9,7 @@ recalled from memory.
 | **Source** | https://github.com/johnfrancis973/good-news-ai-map (public) |
 | **Database** | Lovable Cloud / Supabase `oskgbaudwjxttfzxzbmx`, PostgreSQL 17.6 |
 | **Lovable project** | `a9b1c62b-8943-42e7-8e7e-ac3f05331fc6` |
-| **Status** | Working end to end. 73 published stories, 8 locations (measured 2026-08-22 — the section 5 breakdown below predates the recent harvests). All acceptance checks pass except the one asserting `submit_suggestion` returns an id: migration `0003_suggestion_verification.sql` and the `submit-suggestion` function are written but **not yet applied or deployed**. See section 9. |
+| **Status** | Working end to end. 94 published stories, 8 locations (measured 2026-08-22 — the section 5 breakdown below predates the recent harvests). All acceptance checks pass. Migration `0003` **is applied**; the `submit-suggestion` function is **not deployed** and the new frontend is **not shipped**. See the warning in section 9. |
 
 Run `node scripts/verify.mjs` at any time. It exercises the live API exactly as
 a browser does and exits non-zero if anything is broken.
@@ -78,6 +78,7 @@ dashboard.
 
 ```sh
 node scripts/known-urls.mjs                                   # what's already processed
+node scripts/known-urls.mjs --published-only                  # let old rejects be retried
 node scripts/harvest.mjs --preset paris --known harvest/known-urls.json
 ```
 
@@ -95,8 +96,15 @@ Loading `harvest/*.json` into Postgres is currently manual, via Lovable's MCP
 exists, `scripts/ingest-local.mjs` does it in one step — it imports the *same*
 `pipeline.js` and writes straight to the database.
 
-Presets: `cayenne`, `paris`, `london`, `newyork`, `reykjavik`. Each carries
-coordinates, radius and a list of regional news outlets.
+Presets: `cayenne`, `paris`, `london`, `newyork`, `mumbai`, `reykjavik`,
+`minnertsga`, `munich`, `losangeles`, `chicago`. Each carries coordinates,
+radius and a list of regional news outlets. Three optional fields matter:
+
+| Field | What it does |
+|---|---|
+| `search_names` | Every name the place is printed under, as ONE OR-group in the query. Without it the label before the first comma is quoted verbatim. |
+| `region_terms` | A disambiguator on the OPEN passes only, never on `news+outlets`. |
+| `lang` | The language local outlets publish in. `THEME_GROUPS` only has `en` and `fr`; declaring anything else forces the bare-name pass (below). |
 
 ---
 
@@ -275,6 +283,31 @@ Kept because they will bite again.
   raise `FirecrawlAccountError`, which aborts the run and deletes the claims it
   never finished. **If a harvest reports nothing but "no usable content", check
   the log for 402 before believing it.**
+- **A preset label is not a search term.** `munich` is labelled
+  `"München (Munich), Germany"` so an operator sees both spellings, and
+  `buildQuery()` used to quote everything before the first comma - emitting the
+  literal phrase `"München (Munich)"`, which no German outlet has ever printed.
+  18 candidates, 0 published. `search_names: ["München", "Munich"]` makes it
+  `("München" OR "Munich")`: 129 candidates, 16 published. **If a preset yields
+  nothing, read the queries it actually sent before touching anything else.**
+- **The candidate cap is not a recall floor.** `MAX_CANDIDATES = 40` bounds how
+  many candidates get SCRAPED. It cannot invent candidates that search never
+  returned, and it never bound either of the two locations that published
+  nothing. `RECALL_FLOOR = 12` is the other end: below it, `searchCandidates()`
+  re-runs the place name and the window with no verb or subject group at all and
+  lets snippet triage filter the noise, which is an OpenAI call per 25
+  candidates rather than a rate-limited scrape. Minnertsga went 4 -> 51 this way.
+- **English theme words do not find German, Dutch or Icelandic news.**
+  `THEME_GROUPS` carries `en` and `fr` only. A preset declaring any other `lang`
+  runs its themed passes in English AND forces the bare pass, because the place
+  name is the one part of a query that is language-neutral. The validator and
+  triage both read the article in whatever language it was written.
+- **A rejected URL is blacklisted forever unless you say otherwise.**
+  `known-urls.mjs` folds rejects into the known set and `runPipeline`'s dedupe
+  query does not filter on status, so a candidate rejected under a 5-day window
+  or a pre-`event_status` validator is never seen again. `--published-only`
+  drops them from the list: 221 known URLs became 99, freeing 122 for a second
+  look. Use it whenever the rules change; it costs one scrape per revisited URL.
 - **`after:` is a request, not a guarantee.** A 2023 article was published
   through an `after:2025-08-22` query. `staleReason()` re-checks the date
   resolved from the page itself before anything is persisted. Undated articles
@@ -344,6 +377,45 @@ Three things hold the line this crosses:
 Still not built: a moderation dashboard. `new` in the queue now means *needs a
 person* — an unresolvable place, a spent budget, or a machine rejection worth
 overruling.
+
+### Deployment state, 22 August 2026 — READ BEFORE SHIPPING THE FRONTEND
+
+| Piece | State |
+|---|---|
+| Migration `0003_suggestion_verification.sql` | **applied** to the live database |
+| `supabase/functions/submit-suggestion/` | **not deployed** |
+| Frontend calling that function | **not shipped** — `dist/` on `gh-pages` is still the old bundle |
+
+This order is deliberate and the remaining step has a foot-gun in it:
+
+> **Do not publish the frontend before the function is deployed.** The new
+> `useSubmitSuggestion` calls `functions/v1/submit-suggestion`. Until that
+> function exists, every submission gets a 404 and the form shows "Could not
+> reach the database". Deploy the function first, confirm it answers, then
+> publish `dist/`.
+
+The database half is safe on its own, which is why it went first. `0003` is
+backwards compatible: the old five-argument `submit_suggestion` call the live
+bundle still makes resolves to the new seven-argument function through its
+defaults. Verified — `node scripts/verify.mjs` passes every check against the
+migrated database with the currently-published frontend.
+
+To finish:
+
+```sh
+# needs a Supabase personal access token (supabase.com/dashboard/account/tokens)
+npx supabase login          # or SUPABASE_ACCESS_TOKEN=sbp_... in .env.ingest
+npx supabase functions deploy submit-suggestion --project-ref oskgbaudwjxttfzxzbmx
+
+# then, and only then:
+$env:VITE_BASE = "/good-news-ai-map/"; node scripts/build-pages.mjs
+# publish dist/ to gh-pages
+```
+
+`OPENAI_API_KEY` and `FIRECRAWL_API_KEY` are already in the project's secrets
+for `ingest-location`, so the new function picks them up. If either were
+missing it degrades safely: the submission is logged and queued, and
+verification is skipped rather than erroring.
 
 ---
 
