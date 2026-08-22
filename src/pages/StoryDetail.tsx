@@ -112,7 +112,7 @@ export default function StoryDetail() {
             This story may not be published, or the link may be wrong.
           </p>
           <Link
-            to="/explore"
+            to={lastExploreHref()}
             className="inline-flex h-11 items-center rounded-full bg-forest px-5 text-sm font-semibold text-forest-foreground transition hover:brightness-110"
           >
             Explore the map

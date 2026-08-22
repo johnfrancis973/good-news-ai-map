@@ -8,7 +8,7 @@ import { StoryCard } from "../components/StoryCard";
 import { StoryMap } from "../components/StoryMap";
 import { useLocations, useNearbyStories } from "../lib/queries";
 import { categoryOf, type Category } from "../lib/types";
-import { rememberExplore } from "../lib/utils";
+import { lastExploreSearch, rememberExplore } from "../lib/utils";
 
 export default function Explore() {
   const [params, setParams] = useSearchParams();
@@ -48,6 +48,16 @@ export default function Explore() {
   useEffect(() => {
     if (lat !== null && lng !== null) rememberExplore(`?${params.toString()}`);
   }, [params, lat, lng]);
+
+  // Arriving at a bare /explore — from the nav, "View all", or a link that
+  // lost its query — restores the last place instead of showing an empty
+  // page. Only ever runs once per visit: writing the params makes lat and lng
+  // non-null, so the condition cannot hold a second time.
+  useEffect(() => {
+    if (lat !== null || lng !== null) return;
+    const remembered = lastExploreSearch();
+    if (remembered) setParams(new URLSearchParams(remembered), { replace: true });
+  }, [lat, lng, setParams]);
 
   // Clicking a marker scrolls its card into view.
   useEffect(() => {

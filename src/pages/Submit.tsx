@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Check, Loader2, Shield, TriangleAlert, WifiOff }
 import { Footer, Header } from "../components/Layout";
 import { LocationSearch } from "../components/LocationSearch";
 import { useSubmitSuggestion } from "../lib/queries";
+import { lastExploreHref } from "../lib/utils";
 
 const FIELD =
   "w-full rounded-md border border-input bg-card px-[18px] py-3 text-[15px] outline-none transition focus:border-primary focus:ring-[3px] focus:ring-primary/20 placeholder:text-muted-foreground/70";
@@ -65,7 +66,7 @@ export default function Submit() {
           </p>
           <div className="mt-1 flex flex-wrap justify-center gap-2.5">
             <Link
-              to="/explore"
+              to={lastExploreHref()}
               className="inline-flex h-11 items-center rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:brightness-95"
             >
               Explore the map

@@ -2,12 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Menu, Plus, Search, Sparkle, X } from "lucide-react";
 import { LocationSearch, type Resolved } from "./LocationSearch";
-import { cn, exploreHref } from "../lib/utils";
+import { cn, exploreHref, lastExploreHref } from "../lib/utils";
 
-const NAV = [
-  { to: "/explore", label: "Explore" },
-  { to: "/submit", label: "Submit a story" },
-];
+/**
+ * "Explore" carries the last place with it. A bare /explore renders a map-less
+ * page that cannot scroll, which reads as a frozen tab rather than an empty
+ * one — see lastExploreHref.
+ */
+function navItems() {
+  return [
+    { to: lastExploreHref(), match: "/explore", label: "Explore" },
+    { to: "/submit", match: "/submit", label: "Submit a story" },
+  ];
+}
 
 export function Header({
   className,
@@ -50,13 +57,13 @@ export function Header({
 
         <div className="flex items-center gap-1 sm:gap-4">
           <nav className="hidden items-center gap-5 sm:flex">
-            {NAV.map((item) => {
+            {navItems().map((item) => {
               const isActive =
-                (active === "explore" && item.to === "/explore") ||
-                (active === "submit" && item.to === "/submit");
+                (active === "explore" && item.match === "/explore") ||
+                (active === "submit" && item.match === "/submit");
               return (
                 <Link
-                  key={item.to}
+                  key={item.match}
                   to={item.to}
                   className={cn(
                     "text-sm transition",
@@ -113,9 +120,9 @@ export function Header({
 
       {menuOpen && (
         <nav className="border-t border-forest-foreground/10 px-4 py-2 sm:hidden">
-          {NAV.map((item) => (
+          {navItems().map((item) => (
             <Link
-              key={item.to}
+              key={item.match}
               to={item.to}
               onClick={() => setMenuOpen(false)}
               className="block rounded-md px-2 py-3 text-sm font-medium text-forest-muted transition hover:text-forest-foreground"

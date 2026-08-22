@@ -97,13 +97,17 @@ export function rememberExplore(search: string): void {
   }
 }
 
-export function lastExploreHref(): string {
+/** The remembered query string, including its "?", or "" if there is none. */
+export function lastExploreSearch(): string {
   try {
-    const search = sessionStorage.getItem(LAST_EXPLORE_KEY);
-    return search ? `/explore${search}` : "/explore";
+    return sessionStorage.getItem(LAST_EXPLORE_KEY) ?? "";
   } catch {
-    return "/explore";
+    return "";
   }
+}
+
+export function lastExploreHref(): string {
+  return `/explore${lastExploreSearch()}`;
 }
 
 /**

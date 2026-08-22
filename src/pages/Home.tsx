@@ -4,7 +4,7 @@ import { Footer, Header } from "../components/Layout";
 import { LocationSearch, type Resolved } from "../components/LocationSearch";
 import { StoryCard } from "../components/StoryCard";
 import { useFeaturedStories, useLocations } from "../lib/queries";
-import { exploreHref } from "../lib/utils";
+import { exploreHref, lastExploreHref } from "../lib/utils";
 
 const PILLARS = [
   {
@@ -73,7 +73,7 @@ export default function Home() {
             <LocationSearch
               onResolved={go}
               action="Search"
-              placeholder="Try Cayenne, London or New York"
+              placeholder="Try Mumbai, Cayenne or New York"
               pill
               autoFocus
             />
@@ -119,7 +119,7 @@ export default function Home() {
                 </p>
               </div>
               <Link
-                to="/explore"
+                to={lastExploreHref()}
                 className="inline-flex h-11 items-center gap-2 rounded-full border border-input bg-card px-5 text-sm font-semibold transition hover:border-primary/40"
               >
                 View all
@@ -130,7 +130,7 @@ export default function Home() {
             {featuredError ? (
               <p className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
                 Could not reach the story database. The map still works —{" "}
-                <Link to="/explore" className="font-semibold text-primary underline">
+                <Link to={lastExploreHref()} className="font-semibold text-primary underline">
                   try exploring
                 </Link>
                 .
