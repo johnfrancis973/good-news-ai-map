@@ -17,7 +17,7 @@ const OPENAI_MODEL = "gpt-4o-mini";
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const USER_AGENT = "GoodNewsAIMap/1.0 (hackathon MVP)";
 
-export const MAX_CANDIDATES = 20;
+export const MAX_CANDIDATES = 60;
 const MAX_MARKDOWN_CHARS = 8000;
 const MIN_CONFIDENCE = 0.6;
 
@@ -55,6 +55,17 @@ const DOMAIN_BLOCKLIST = [
   "economist.com", "newyorker.com", "reuters.com",
 ];
 
+// URL paths that are never a reported story: CMS standing pages and corporate
+// press-release sections. Probing Paris surfaced paris.fr/pages/ aid-scheme
+// pages, danone.com/newsroom/communiques-de-presse/ and a ministry /pressrelease/
+// all being accepted at confidence 0.9 — the model reads them as news because
+// they are written like news. Cheaper and more reliable to drop them by shape.
+const NON_ARTICLE_PATHS = [
+  "/pages/", "/newsroom/", "/press-release/", "/pressrelease/",
+  "/communiques-de-presse/", "/communique-de-presse/", "/a-la-une/",
+  "/press-releases/", "/media-centre/", "/media-center/",
+];
+
 const TRACKING_PARAMS = [
   "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
   "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "source", "amp",
@@ -71,6 +82,12 @@ const THEMES = [
   { en: "local innovation startup wins",   fr: "innovation locale entreprise prix" },
   { en: "conservation species protected",  fr: "protection espece conservation" },
   { en: "association awarded volunteers",  fr: "association recompensee benevoles" },
+  { en: "renovated reopens after works",   fr: "renove rouvre apres travaux" },
+  { en: "volunteers restore repair",       fr: "benevoles restaurent reparent" },
+  { en: "funding awarded facility completed", fr: "financement obtenu equipement acheve" },
+  { en: "charity helps residents",         fr: "association aide habitants" },
+  { en: "new cycle path park opens",       fr: "nouvelle piste cyclable parc ouvre" },
+  { en: "research breakthrough university", fr: "decouverte recherche universite" },
 ];
 
 const FRENCH_HINTS = [
@@ -87,11 +104,19 @@ REJECT the article (accepted=false) if ANY of these is true:
 - the event cannot be traced to the supplied source text
 - it is primarily negative with only incidental positivity
 - it is advertising, PR or marketing disguised as news
-- it is unsupported opinion or a column with no reported event
+- it is an organisation's own account of its own activity: a corporate newsroom
+  or press release, or a company, ministry or national body describing a
+  programme it runs rather than reporting a specific occasion. A local authority
+  reporting a specific event that happened in its own area is NOT caught by this
+  rule and should be judged on the event itself
+- it is opinion or commentary with no underlying reported event: a column
+  written about a real, completed local improvement is not a rejection
 - it is irrelevant to the target geography given below
 - it is a directory, listing, index page, paywall stub, cookie notice or navigation shell
-- it is a call for projects, grant announcement, funding programme, scheme
-  landing page or tender rather than a reported outcome
+- it is an open call for projects, an invitation to apply, a tender, or a page
+  describing an aid, grant or subsidy scheme that is simply available - nothing
+  has happened yet, however useful the scheme is. Funding actually AWARDED, on a
+  specific occasion, to a NAMED project is a reported event and is not a rejection
 - it is a standing service, programme or policy page on an official site rather
   than a report of something that happened on a specific occasion
 - it is a consultation, impact assessment, strategy document or plan that has
@@ -113,6 +138,9 @@ REJECT the article (accepted=false) if ANY of these is true:
 A REPORTED EVENT HAS A WHEN. If you cannot point to something that happened -
 an opening, a completion, a result, an award, a launch that already occurred -
 then this is not a story for this map, however worthy the underlying programme.
+An ongoing programme reporting a milestone ALREADY REACHED - so many homes
+insulated, a hundredth patient treated, a target met - counts as an event. Works
+that are under way, due, planned or "en cours" have not happened yet: reject them.
 
 THE TEST IS WHETHER SOMETHING GOT BETTER FOR ORDINARY PEOPLE THERE. Ask who is
 better off and how. If the honest answer is "investors", "a developer" or "no
@@ -310,6 +338,8 @@ function looksLikeArticle(url) {
   try {
     const p = new URL(url).pathname;
     if (/\.(pdf|jpg|png|zip|doc|docx)$/i.test(p)) return false;
+    const lower = p.toLowerCase();
+    if (NON_ARTICLE_PATHS.some((seg) => lower.includes(seg))) return false;
     if (/\/\d{4}\/\d{2}\//.test(p)) return true;
     const slug = p.split("/").filter(Boolean).pop() ?? "";
     return slug.split("-").length >= 4;
@@ -366,26 +396,36 @@ export async function searchCandidates(firecrawlKey, payload, log) {
   const outlets = payload.outlets ?? [];
   const shortName = locationName.split(",")[0].trim();
 
-  const themes = payload.queries?.length
-    ? payload.queries.slice(0, 8)
-    : THEMES.map((t) => `${shortName} ${french ? t.fr : t.en}`);
+  const override = payload.queries?.length ? payload.queries.slice(0, 16) : null;
+  const themes = override ?? THEMES.map((t) => `${shortName} ${french ? t.fr : t.en}`);
 
   const passes = [];
   if (outlets.length > 0) {
-    passes.push({ label: "news+outlets", opts: { sources: [{ type: "news" }], includeDomains: outlets } });
+    passes.push({ label: "news+outlets", themes, opts: { sources: [{ type: "news" }], includeDomains: outlets } });
   }
-  passes.push({ label: "news", opts: { sources: [{ type: "news" }] } });
+  passes.push({ label: "news", themes, opts: { sources: [{ type: "news" }] } });
+
+  // A French-speaking place is still covered by English-language outlets, and the
+  // French-only query set makes that coverage invisible. Search it too.
+  if (french && !override) {
+    passes.push({
+      label: "news+en",
+      themes: THEMES.map((t) => `${shortName} ${t.en}`),
+      opts: { sources: [{ type: "news" }] },
+    });
+  }
 
   const seen = new Map();
   const queriesRun = [];
 
-  for (const pass of passes) {
-    for (const query of themes) {
+  for (let passIndex = 0; passIndex < passes.length; passIndex++) {
+    const pass = passes[passIndex];
+    for (const query of pass.themes) {
       queriesRun.push(`[${pass.label}] ${query}`);
       const body = {
         __key: firecrawlKey,
         query,
-        limit: 10,
+        limit: 20,
         tbs: "qdr:y",
         ...pass.opts,
       };
@@ -398,21 +438,30 @@ export async function searchCandidates(firecrawlKey, payload, log) {
       if (!Array.isArray(rows)) continue;
 
       let kept = 0;
-      for (const r of rows) {
+      for (let rank = 0; rank < rows.length; rank++) {
+        const r = rows[rank];
         const url = normalizeUrl(typeof r?.url === "string" ? r.url : "");
         if (!url || seen.has(url) || isBlocked(url)) continue;
         if (!looksLikeArticle(url)) continue;
-        seen.set(url, { url, title: firstString(r?.title), pass: pass.label });
+        seen.set(url, { url, title: firstString(r?.title), pass: pass.label, rank, passIndex });
         kept++;
       }
       log(`${pass.label}: ${rows.length} results, ${kept} new  <- ${query}`);
     }
-
-    // Enough precision from the outlet pass alone? Skip the broad pass.
-    if (seen.size >= (payload.max_candidates ?? MAX_CANDIDATES)) break;
   }
 
-  return { candidates: [...seen.values()], queriesRun };
+  // RANK-MAJOR, NOT PASS-MAJOR. The caller truncates this list to fill its
+  // candidate budget, so whatever sits at the front is what actually gets
+  // scraped. Insertion order is pass-major: the outlet pass alone can fill the
+  // whole budget, which spends it on that pass's rank-20 dregs — general crime
+  // and crisis reporting — while every other pass's top hit goes unprocessed.
+  // Interleave by rank instead, so the best hit from all queries is processed
+  // before any query's second-best.
+  const candidates = [...seen.values()].sort(
+    (a, b) => a.rank - b.rank || a.passIndex - b.passIndex,
+  );
+
+  return { candidates, queriesRun };
 }
 
 // ---------------------------------------------------------------- scrape
@@ -700,7 +749,7 @@ async function finish(supabase, jobId, status, stats, errorMessage) {
 export async function runPipeline(supabase, keys, payload, jobId, locationId, logger) {
   const log = logger ?? ((m) => console.log(m));
   const stats = { found: 0, processed: 0, published: 0, rejected: 0 };
-  const maxCandidates = Math.min(payload.max_candidates ?? MAX_CANDIDATES, 40);
+  const maxCandidates = Math.min(payload.max_candidates ?? MAX_CANDIDATES, 100);
 
   try {
     // --- STEP 1+2: search and collect candidates ----------------------

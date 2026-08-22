@@ -68,7 +68,7 @@ const { candidates, queriesRun } = await searchCandidates(cfg.firecrawlKey, payl
 log(`${candidates.length} unique article-shaped candidates`);
 
 const unseen = candidates.filter((c) => !known.has(c.url));
-const cap = Math.min(payload.max_candidates ?? MAX_CANDIDATES, 40);
+const cap = Math.min(payload.max_candidates ?? MAX_CANDIDATES, 100);
 const fresh = unseen.slice(0, cap);
 log(
   `${candidates.length - unseen.length} already known, ` +
