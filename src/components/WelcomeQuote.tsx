@@ -2,31 +2,78 @@ import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 /**
- * A short line, once per visit, a few seconds after arrival.
+ * A short quotation, credited, a couple of seconds after arrival.
  *
- * THE LINES ARE ORIGINAL, ON PURPOSE. The obvious way to build this is to pull
- * from a quotes site or a quotes API, and almost every famous motivational
- * quote worth showing is still in copyright - and those collections carry their
- * own licence terms on top. Writing our own costs nothing, carries no licence,
- * and can actually be about this map rather than about success in general.
+ * EVERY AUTHOR HERE IS IN THE PUBLIC DOMAIN - dead more than seventy years, or
+ * first published before 1929. That is what makes it safe to print the words
+ * and the name without a licence. Quote sites and quote APIs are the obvious
+ * source and the wrong one: their collections carry their own terms, and the
+ * famous lines they lead with are mostly still in copyright.
  *
- * It is a corner card and not a modal. Something that blocks the page three
- * seconds after arrival is an obstacle, not a welcome, and the first thing a
- * visitor came for is the map behind it.
+ * ATTRIBUTIONS ARE CHECKED, and the most quotable lines were dropped because
+ * they are misattributed: "Be the change you wish to see in the world" is not
+ * Gandhi, "What lies behind us and what lies before us..." is Henry Stanley
+ * Haskins rather than Emerson, and "In the middle of difficulty lies
+ * opportunity" is not Einstein. On a map whose whole claim is that each story
+ * was verified, printing a false attribution would be the one unforced error
+ * worth avoiding. If you add a line, source it before you add it.
+ *
+ * It is a card, not a modal. Something that blocks the page two seconds after
+ * arrival is an obstacle, not a welcome.
  */
-const LINES: Array<[string, string]> = [
-  ["🌞", "Something good happened near you today. Someone just has to go and find it."],
-  ["🌱", "Progress rarely announces itself. It opens a door, fixes a roof, plants a tree."],
-  ["🏗️", "The world is not only what breaks. It is also what gets rebuilt."],
-  ["🏘️", "Small repairs, repeated, become a different city."],
-  ["📣", "Bad news travels on its own. Good news needs someone to carry it."],
-  ["🌉", "A bridge opened. A clinic opened. Someone decided to keep going."],
-  ["💚", "Hope is not a mood. It is a record of things that actually happened."],
-  ["🚲", "Look closer at your own street. That is where most progress lives."],
-  ["🤝", "Nobody fixes everything. Everybody fixes something."],
-  ["🎉", "Good news is not the absence of trouble. It is proof that people answered it."],
-  ["📖", "Read one thing today that somebody finished."],
-  ["🙌", "The quiet work is the work. It rarely makes the front page."],
+type Quote = { emoji: string; text: string; author: string };
+
+const LINES: Quote[] = [
+  {
+    emoji: "🌱",
+    text: "Great things are not done by impulse, but by a series of small things brought together.",
+    author: "Vincent van Gogh",
+  },
+  {
+    emoji: "🤝",
+    text: "No act of kindness, no matter how small, is ever wasted.",
+    author: "Aesop",
+  },
+  {
+    emoji: "🌞",
+    text: "Optimism is the faith that leads to achievement.",
+    author: "Helen Keller",
+  },
+  {
+    emoji: "💚",
+    text: "No one is useless in this world who lightens the burden of it for anyone else.",
+    author: "Charles Dickens",
+  },
+  {
+    emoji: "🌉",
+    text: "I am not afraid of storms, for I am learning how to sail my ship.",
+    author: "Louisa May Alcott",
+  },
+  {
+    emoji: "🎉",
+    text: "Nothing great was ever achieved without enthusiasm.",
+    author: "Ralph Waldo Emerson",
+  },
+  {
+    emoji: "🔬",
+    text: "Nothing in life is to be feared, it is only to be understood.",
+    author: "Marie Curie",
+  },
+  {
+    emoji: "🏗️",
+    text: "Success is to be measured not so much by the position that one has reached, as by the obstacles overcome.",
+    author: "Booker T. Washington",
+  },
+  {
+    emoji: "🌤️",
+    text: "Dwell on the beauty of life.",
+    author: "Marcus Aurelius",
+  },
+  {
+    emoji: "🕯️",
+    text: "A single sunbeam is enough to drive away many shadows.",
+    author: "Francis of Assisi",
+  },
 ];
 
 /**
@@ -42,7 +89,7 @@ const APPEAR_AFTER_MS = 2200;
 const DISMISS_AFTER_MS = 15000;
 
 export function WelcomeQuote() {
-  const [line, setLine] = useState<[string, string] | null>(null);
+  const [line, setLine] = useState<Quote | null>(null);
   const [shown, setShown] = useState(false);
 
   useEffect(() => {
@@ -74,9 +121,16 @@ export function WelcomeQuote() {
     >
       <div className="pointer-events-auto flex w-full max-w-2xl items-start gap-5 rounded-3xl border-2 border-primary/70 bg-card px-7 py-7 text-foreground shadow-[0_24px_70px_-14px_rgba(0,0,0,0.55)] sm:px-9 sm:py-9">
         <span aria-hidden className="text-[34px] leading-none sm:text-[42px]">
-          {line[0]}
+          {line.emoji}
         </span>
-        <p className="display flex-1 text-[22px] leading-[1.3] sm:text-[28px]">{line[1]}</p>
+        <div className="flex flex-1 flex-col gap-2">
+          <p className="display text-[20px] leading-[1.3] sm:text-[26px]">
+            &ldquo;{line.text}&rdquo;
+          </p>
+          <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+            {line.author}
+          </p>
+        </div>
         <button
           type="button"
           onClick={() => setShown(false)}
