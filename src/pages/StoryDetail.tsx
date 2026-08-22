@@ -16,7 +16,16 @@ import {
 import { Footer, Header } from "../components/Layout";
 import { useRateStory, useStory, useStoryRatings } from "../lib/queries";
 import { CATEGORY_COLORS, CATEGORY_ICONS, CATEGORY_LABELS, categoryOf } from "../lib/types";
-import { asStringList, cn, formatDate, getSessionId, hostnameOf, shareUrl } from "../lib/utils";
+import {
+  asStringList,
+  cn,
+  exploreHref,
+  formatDate,
+  getSessionId,
+  hostnameOf,
+  lastExploreHref,
+  shareUrl,
+} from "../lib/utils";
 
 function Section({
   title,
@@ -122,11 +131,27 @@ export default function StoryDetail() {
   const publisher = story.source_name || hostnameOf(story.source_url);
   const showAi = story.ai_relevance === true && Boolean(story.ai_outlook);
 
+  // Where "Back to the map" goes. The map the visitor came from if there was
+  // one; otherwise the map around this story — arriving from the home grid or
+  // a shared link is the common case, and a bare /explore would strand them on
+  // a page with no map and no scroll.
+  const backHref =
+    lastExploreHref() === "/explore"
+      ? exploreHref({
+          name: story.location_name ?? story.title,
+          latitude: story.latitude,
+          longitude: story.longitude,
+          radiusKm: 50,
+        })
+      : lastExploreHref();
+
   return (
     <Shell>
       <article className="pb-16 pt-8">
+        {/* Carries the place back with it. A bare /explore drops the location
+            and lands the visitor on an empty, unscrollable page. */}
         <Link
-          to="/explore"
+          to={backHref}
           className="mb-7 inline-flex h-9 items-center gap-2 rounded-full border border-input bg-card pl-3 pr-4 text-[13px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />

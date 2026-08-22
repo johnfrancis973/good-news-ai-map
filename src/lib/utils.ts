@@ -77,6 +77,35 @@ export function asStringList(value: unknown): string[] {
   return [];
 }
 
+const LAST_EXPLORE_KEY = "gnam_last_explore";
+
+/**
+ * Remember the place the visitor was looking at, so "Back to the map" returns
+ * them to that map rather than to an empty one.
+ *
+ * Explore is a full-height page with its own scrolling panel, so landing on it
+ * with no location shows a prompt and nothing else — and since the page itself
+ * cannot scroll, that dead end reads as a frozen tab. Session storage rather
+ * than router state because a story reached by a deep link has no history to
+ * go back to.
+ */
+export function rememberExplore(search: string): void {
+  try {
+    if (search) sessionStorage.setItem(LAST_EXPLORE_KEY, search);
+  } catch {
+    // Private mode. The back link falls back to a bare /explore.
+  }
+}
+
+export function lastExploreHref(): string {
+  try {
+    const search = sessionStorage.getItem(LAST_EXPLORE_KEY);
+    return search ? `/explore${search}` : "/explore";
+  } catch {
+    return "/explore";
+  }
+}
+
 /**
  * The one place the /explore query string is built. Takes the fields of a
  * resolved place rather than the component's type, so lib does not depend on

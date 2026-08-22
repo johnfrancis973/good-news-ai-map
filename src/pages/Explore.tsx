@@ -8,6 +8,7 @@ import { StoryCard } from "../components/StoryCard";
 import { StoryMap } from "../components/StoryMap";
 import { useLocations, useNearbyStories } from "../lib/queries";
 import { categoryOf, type Category } from "../lib/types";
+import { rememberExplore } from "../lib/utils";
 
 export default function Explore() {
   const [params, setParams] = useSearchParams();
@@ -41,6 +42,12 @@ export default function Explore() {
     () => (category ? stories.filter((s) => categoryOf(s.category) === category) : stories),
     [stories, category],
   );
+
+  // Remember where the visitor was, so a story's "Back to the map" comes back
+  // to this map rather than to the empty one.
+  useEffect(() => {
+    if (lat !== null && lng !== null) rememberExplore(`?${params.toString()}`);
+  }, [params, lat, lng]);
 
   // Clicking a marker scrolls its card into view.
   useEffect(() => {
@@ -80,8 +87,11 @@ export default function Explore() {
       </div>
 
       <main className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-        {/* Map — 45vh on mobile, a fixed column on desktop. */}
-        <div className="h-[45vh] shrink-0 border-b border-border lg:h-auto lg:flex-1 lg:border-b-0 lg:border-r">
+        {/* Map — 40vh on mobile, half the width on desktop. The map used to
+            take the remaining space, which put it above 65% on a laptop and
+            squeezed the stories into a strip. The stories are the content;
+            the map is the index. */}
+        <div className="h-[40vh] shrink-0 border-b border-border lg:h-auto lg:w-1/2 lg:border-b-0 lg:border-r xl:w-[55%]">
           {hasLocation ? (
             <StoryMap
               center={center}
@@ -127,7 +137,7 @@ export default function Explore() {
         </div>
 
         {/* Story panel */}
-        <aside className="thin-scroll flex-1 overflow-y-auto lg:max-w-[460px] xl:max-w-[480px]">
+        <aside className="thin-scroll flex-1 overflow-y-auto">
           {hasLocation && (
             <div className="flex items-end justify-between gap-4 border-b border-border px-5 py-4 sm:px-[22px]">
               <div className="min-w-0">
