@@ -160,6 +160,7 @@ export default function Submit() {
             size="md"
             action="Use"
             placeholder="City, region or country"
+            showCovered={false}
             onQueryChange={(q) => {
               setPlace(q);
               // Editing the text invalidates whatever was resolved before it.

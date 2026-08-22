@@ -25,6 +25,13 @@ type Props = {
    * geocoder cannot resolve can still be submitted as written.
    */
   onQueryChange?: (value: string) => void;
+  /**
+   * With an empty box, offer the places the map already covers instead of an
+   * empty panel. Off for the suggestion form, where the question is "where did
+   * this happen?" and any place on earth is a valid answer - listing our own
+   * twelve there would read as the only choices allowed.
+   */
+  showCovered?: boolean;
 };
 
 /**
@@ -41,6 +48,7 @@ export function LocationSearch({
   placeholder = "Search a city or region",
   pill = false,
   onQueryChange,
+  showCovered = true,
 }: Props) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -67,6 +75,17 @@ export function LocationSearch({
         radiusKm: l.default_radius_km ?? 50,
       }));
   }, [locations, query]);
+
+  const covered = useMemo(
+    () =>
+      locations.map((l: LocationRow) => ({
+        name: l.name,
+        latitude: l.latitude,
+        longitude: l.longitude,
+        radiusKm: l.default_radius_km ?? 50,
+      })),
+    [locations],
+  );
 
   // Only reach for the geocoder when we have nothing locally.
   useEffect(() => {
@@ -105,7 +124,13 @@ export function LocationSearch({
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
 
-  const suggestions = localMatches.length > 0 ? localMatches : remote;
+  const typed = query.trim().length > 0;
+  const showingCovered = !typed && showCovered && covered.length > 0;
+  const suggestions = showingCovered
+    ? covered
+    : localMatches.length > 0
+      ? localMatches
+      : remote;
 
   function pick(place: Resolved) {
     setQuery(place.name);
@@ -115,6 +140,7 @@ export function LocationSearch({
   }
 
   function submit() {
+    if (showingCovered) return;
     if (suggestions.length > 0) pick(suggestions[0]);
   }
 
@@ -162,7 +188,7 @@ export function LocationSearch({
         <button
           type="button"
           onClick={submit}
-          disabled={suggestions.length === 0}
+          disabled={showingCovered || suggestions.length === 0}
           className={cn(
             // Forest, not coral: the primary action on this screen is the
             // story you go on to open, not the act of searching.
@@ -181,7 +207,12 @@ export function LocationSearch({
           surface inside the dark hero band needs its own text colour, or the
           place names render white on white. */}
       {open && suggestions.length > 0 && (
-        <ul className="absolute z-40 mt-2 w-full overflow-hidden rounded-md border border-border bg-card text-foreground shadow-raised">
+        <ul className="absolute z-40 mt-2 max-h-[19rem] w-full overflow-y-auto overflow-x-hidden rounded-md border border-border bg-card text-foreground shadow-raised">
+          {showingCovered && (
+            <li className="border-b border-border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+              Places on the map
+            </li>
+          )}
           {suggestions.map((s, i) => (
             <li key={`${s.name}-${i}`}>
               <button
