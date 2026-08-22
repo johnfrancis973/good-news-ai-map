@@ -7,7 +7,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
-import type { LocationRow, RatingCounts, Story, StorySummary, Suggestion } from "./types";
+import type {
+  LocationRow,
+  RatingCounts,
+  Story,
+  StorySummary,
+  Suggestion,
+  SupportRequest,
+} from "./types";
 import { getSessionId } from "./utils";
 
 const STORY_FIELDS =
@@ -224,6 +231,30 @@ async function readFunctionError(error: unknown): Promise<string | null> {
   }
 }
 
+/**
+ * Sponsorship and donation messages. Same contract as useSubmitSuggestion:
+ * a sealed queue, reached through a security-definer function, with no read
+ * path back out - not for the sender, not for anyone holding the public key.
+ *
+ * This replaced a mailto: link, which fails silently when the visitor has no
+ * mail client registered. A row cannot fail silently, and an operator reads
+ * these with the service role.
+ */
+export function useSubmitSupportRequest() {
+  return useMutation({
+    mutationFn: async (input: SupportRequest): Promise<void> => {
+      const { error } = await supabase.rpc("submit_support_request", {
+        p_intent: input.intent,
+        p_supporter: input.supporter,
+        p_email: input.email,
+        p_amount: input.amount || null,
+        p_message: input.message || null,
+        p_session_id: getSessionId(),
+      });
+      if (error) throw error;
+    },
+  });
+}
 // Place lookup lives in ./geocode, re-exported here so callers have one import.
 export { geocodePlace } from "./geocode";
 export type { GeocodeHit } from "./geocode";

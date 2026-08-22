@@ -3,95 +3,84 @@ import { Link } from "react-router-dom";
 import {
   ArrowLeft,
   ArrowRight,
-  Check,
-  Copy,
   HandCoins,
   Handshake,
-  Mail,
+  Loader2,
+  Shield,
   TriangleAlert,
+  WifiOff,
 } from "lucide-react";
 import { Footer, Header } from "../components/Layout";
 import { Toast } from "../components/Toast";
-
-/**
- * Sponsorship and donations, without a payment provider.
- *
- * There is no Stripe, no Patreon and no checkout in this project, so this screen
- * does not pretend to take money. It composes an email and hands it to the
- * visitor's own mail client, which is the only channel that works today and the
- * only one needing no key, no webhook and no card data anywhere near us.
- *
- * mailto: FAILS SILENTLY. A browser with no mail client registered does nothing
- * at all when the link opens - no error, no tab, nothing. That is why the
- * acknowledgement is not a thank-you and stop: it shows the address, the exact
- * message that was composed, and a copy button, so a visitor whose client never
- * opened still has everything needed to send it by hand.
- */
-
-/** The one line to change if support mail should go somewhere else. */
-export const SUPPORT_EMAIL = "john@jfmedias.fr";
+import { useSubmitSupportRequest } from "../lib/queries";
+import { lastExploreHref } from "../lib/utils";
 
 const FIELD =
   "w-full rounded-md border border-input bg-card px-[18px] py-3 text-[15px] outline-none transition focus:border-primary focus:ring-[3px] focus:ring-primary/20 placeholder:text-muted-foreground/70";
 
 export type Intent = "sponsor" | "donate";
 
+/**
+ * Sponsorship and donations, on the same contract as the story queue.
+ *
+ * What is sent here lands in a table the public cannot read, through a
+ * security-definer function that validates every field and rate-limits by
+ * session. There is no read path back out — not for the sender, not for anyone
+ * holding the public key. An operator reads it with the service role.
+ *
+ * This deliberately replaced a mailto: link. mailto FAILS SILENTLY when the
+ * visitor has no mail client registered: no error, no tab, nothing, and a
+ * person who filled in the whole form has sent nothing at all. A row in a
+ * table cannot fail silently, and the acknowledgement below is true because
+ * the write succeeded rather than because a link was opened.
+ *
+ * There is still no payment provider in this project. Nothing here takes money;
+ * it starts a conversation, and we reply by email.
+ */
 const COPY = {
   sponsor: {
     eyebrow: "Sponsorship",
     title: "Sponsor the map",
     lead:
       "Every story on the map costs a search, a scrape and a validation pass. Sponsorship covers that running cost for a region, a category or the whole map, and we will tell you exactly what your support paid for.",
-    subject: "Sponsorship enquiry - Good News AI Map",
     amountLabel: "What did you have in mind?",
     amountHint: "Optional. A budget, a region you want to back, or nothing at all.",
     amountPlaceholder: "e.g. one region for a year",
     button: "Send sponsorship enquiry",
+    thanks: "Thank you for your enquiry.",
   },
   donate: {
     eyebrow: "Donations",
     title: "Support the map",
     lead:
       "A one-off contribution goes straight into the cost of finding and checking stories: search, scraping, and the validation that keeps announcements and press releases off the map. No account, no subscription, no tracking.",
-    subject: "Donation - Good News AI Map",
     amountLabel: "Amount you have in mind",
     amountHint: "Optional. We will reply with how to send it.",
     amountPlaceholder: "e.g. 25 EUR",
     button: "Send donation message",
+    thanks: "Thank you for your message.",
   },
 } as const;
 
 export default function Support({ intent: initial }: { intent: Intent }) {
   const [intent, setIntent] = useState<Intent>(initial);
-  const [name, setName] = useState("");
+  const [supporter, setSupporter] = useState("");
   const [email, setEmail] = useState("");
   const [amount, setAmount] = useState("");
   const [message, setMessage] = useState("");
   const [trap, setTrap] = useState(""); // honeypot: bots fill it, people cannot see it
   const [invalid, setInvalid] = useState<string | null>(null);
-  const [sent, setSent] = useState<{ subject: string; body: string } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [thanks, setThanks] = useState(false);
 
+  const submit = useSubmitSupportRequest();
   const copy = COPY[intent];
 
-  function compose() {
-    const body = [
-      "Intent: " + (intent === "sponsor" ? "Sponsorship" : "Donation"),
-      "Name or organisation: " + name.trim(),
-      "Reply to: " + email.trim(),
-      "Amount / level: " + (amount.trim() || "not specified"),
-      "",
-      message.trim() || "(no message)",
-    ].join("\n");
-    return { subject: copy.subject, body };
-  }
-
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setInvalid(null);
 
     if (trap) return; // a bot filled the hidden field; drop it silently
-    if (!name.trim()) {
+    if (supporter.trim().length < 2) {
       setInvalid("Please tell us who you are, or which organisation.");
       return;
     }
@@ -100,46 +89,41 @@ export default function Support({ intent: initial }: { intent: Intent }) {
       return;
     }
 
-    const composed = compose();
-    // Percent-encoded and joined with CRLF: a raw newline inside a mailto is
-    // not portable across mail clients.
-    const href =
-      "mailto:" +
-      SUPPORT_EMAIL +
-      "?subject=" +
-      encodeURIComponent(composed.subject) +
-      "&body=" +
-      composed.body.split("\n").map(encodeURIComponent).join("%0D%0A");
-
-    window.location.href = href;
-    setSent(composed);
-    setCopied(false);
-  }
-
-  async function copyToClipboard() {
-    if (!sent) return;
     try {
-      await navigator.clipboard.writeText(
-        "To: " + SUPPORT_EMAIL + "\nSubject: " + sent.subject + "\n\n" + sent.body,
-      );
-      setCopied(true);
+      await submit.mutateAsync({
+        intent,
+        supporter: supporter.trim(),
+        email: email.trim(),
+        amount: amount.trim(),
+        message: message.trim(),
+      });
+      setThanks(true);
+      setSupporter("");
+      setEmail("");
+      setAmount("");
+      setMessage("");
     } catch {
-      // Clipboard access is permission-gated and refuses outright in some
-      // browsers. The message is already on screen, so nothing is lost.
-      setCopied(false);
+      // Rendered from submit.error below, same as the story form.
     }
   }
 
+  const failure = submit.isError
+    ? ((submit.error as { message?: string } | null)?.message ?? "Something went wrong.")
+    : null;
+  const looksLikeValidation =
+    failure !== null && /email|name|intent|limit|invalid|too long|session/i.test(failure);
+
   return (
     <Shell>
-      {sent && (
-        <Toast
-          title="Thank you — your message is ready to send."
-          onClose={() => setSent(null)}
-          action="Close"
-        >
-          Your mail app should have opened with it. If nothing happened, the
-          message is below and can be sent by hand.
+      {thanks && (
+        <Toast title={copy.thanks} onClose={() => setThanks(false)} action="Close">
+          We read every one and reply by email, usually within a few days.
+          <Link
+            to={lastExploreHref()}
+            className="mt-3 inline-flex font-semibold text-foreground underline underline-offset-4"
+          >
+            Explore the map
+          </Link>
         </Toast>
       )}
 
@@ -178,20 +162,17 @@ export default function Support({ intent: initial }: { intent: Intent }) {
         <Field label="Your name or organisation" required>
           <input
             type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={supporter}
+            onChange={(e) => setSupporter(e.target.value)}
             placeholder="Ada Lovelace, or Lovelace Foundation"
             aria-label="Your name or organisation"
             required
+            maxLength={200}
             className={FIELD}
           />
         </Field>
 
-        <Field
-          label="Your email"
-          required
-          hint="So we can reply. It goes into the message and nowhere else."
-        >
+        <Field label="Your email" required hint="This is how we reply. It is never shown on the site.">
           <input
             type="email"
             value={email}
@@ -199,6 +180,7 @@ export default function Support({ intent: initial }: { intent: Intent }) {
             placeholder="you@example.com"
             aria-label="Your email"
             required
+            maxLength={200}
             className={FIELD}
           />
         </Field>
@@ -210,11 +192,12 @@ export default function Support({ intent: initial }: { intent: Intent }) {
             onChange={(e) => setAmount(e.target.value)}
             placeholder={copy.amountPlaceholder}
             aria-label={copy.amountLabel}
+            maxLength={120}
             className={FIELD}
           />
         </Field>
 
-        <Field label="Anything you want to say?" hint="Optional.">
+        <Field label="Anything you want to say?" hint="Optional. Up to 2,000 characters.">
           <textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -237,56 +220,64 @@ export default function Support({ intent: initial }: { intent: Intent }) {
           className="absolute left-[-9999px] h-0 w-0 opacity-0"
         />
 
-        {invalid && (
-          <div className="flex gap-3 rounded-md border border-destructive/30 bg-destructive/[0.06] px-[18px] py-4">
-            <TriangleAlert className="mt-0.5 h-[18px] w-[18px] shrink-0 text-destructive" />
-            <span className="text-[13px] leading-[1.6] text-destructive">{invalid}</span>
-          </div>
-        )}
+        {invalid && <Refusal>{invalid}</Refusal>}
+
+        {failure &&
+          (looksLikeValidation ? (
+            <Refusal>{failure}</Refusal>
+          ) : (
+            <div className="flex gap-3 rounded-md border border-input bg-background px-[18px] py-4">
+              <WifiOff className="mt-0.5 h-[18px] w-[18px] shrink-0 text-muted-foreground" />
+              <div className="flex flex-col gap-1">
+                <span className="text-[13px] font-bold">Could not reach the database</span>
+                <span className="text-[13px] leading-[1.6] text-muted-foreground">
+                  Check your connection and try again.
+                </span>
+              </div>
+            </div>
+          ))}
 
         <div className="flex flex-wrap items-center gap-4 pt-1">
           <button
             type="submit"
-            className="inline-flex h-[50px] items-center gap-2 rounded-full bg-primary px-6 text-[15px] font-semibold text-primary-foreground transition hover:brightness-95"
+            disabled={submit.isPending}
+            className="inline-flex h-[50px] items-center gap-2 rounded-full bg-primary px-6 text-[15px] font-semibold text-primary-foreground transition hover:brightness-95 disabled:opacity-50"
           >
-            <Mail className="h-4 w-4" />
-            {copy.button}
-            <ArrowRight className="h-4 w-4" />
+            {submit.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {submit.isPending ? "Sending" : copy.button}
+            {!submit.isPending && <ArrowRight className="h-4 w-4" />}
           </button>
           <p className="text-[13px] text-muted-foreground">
-            This opens your own mail app. Nothing is stored on the site.
+            No account needed. No payment is taken here.
           </p>
         </div>
       </form>
 
-      {sent && (
-        <div className="mt-[22px] flex flex-col gap-3.5 rounded-lg border border-border bg-background p-5">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-sm font-bold">If your mail app did not open</span>
-            <button
-              type="button"
-              onClick={copyToClipboard}
-              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-input bg-card px-3.5 text-[13px] font-semibold transition hover:border-primary/40"
-            >
-              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied" : "Copy message"}
-            </button>
-          </div>
-          <p className="text-[13px] text-muted-foreground">
-            Send it to{" "}
-            <a
-              href={`mailto:${SUPPORT_EMAIL}`}
-              className="font-semibold text-foreground underline underline-offset-4"
-            >
-              {SUPPORT_EMAIL}
-            </a>
-          </p>
-          <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-card p-4 text-[13px] leading-[1.6]">
-            {`Subject: ${sent.subject}\n\n${sent.body}`}
-          </pre>
+      <div className="mt-[22px] flex gap-3.5 rounded-lg border border-border bg-background p-5">
+        <Shield className="mt-0.5 h-[19px] w-[19px] shrink-0" strokeWidth={1.8} />
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-bold">What happens to what you send</span>
+          <span className="text-[13px] leading-[1.65] text-muted-foreground">
+            This goes into a queue nobody can read back — not other visitors, not
+            you, not anyone holding the public key. We reply from it by email.
+            Nothing you send here appears on the map, and no card details are
+            asked for or handled anywhere on this site.
+          </span>
         </div>
-      )}
+      </div>
     </Shell>
+  );
+}
+
+function Refusal({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3 rounded-md border border-destructive/30 bg-destructive/[0.06] px-[18px] py-4">
+      <TriangleAlert className="mt-0.5 h-[18px] w-[18px] shrink-0 text-destructive" />
+      <div className="flex flex-col gap-1">
+        <span className="text-[13px] font-bold text-destructive">That was refused</span>
+        <span className="text-[13px] leading-[1.6] text-destructive">{children}</span>
+      </div>
+    </div>
   );
 }
 

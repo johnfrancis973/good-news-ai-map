@@ -24,8 +24,10 @@ export default function App() {
           <Route path="/story/:id" element={<StoryDetail />} />
           <Route path="/submit" element={<Submit />} />
           {/* One screen, two intents. The route decides which one opens. */}
-          <Route path="/sponsor" element={<Support intent="sponsor" />} />
-          <Route path="/donate" element={<Support intent="donate" />} />
+          {/* The keys are load-bearing: without them React Router reuses one
+              Support instance across both routes and the intent never changes. */}
+          <Route path="/sponsor" element={<Support key="sponsor" intent="sponsor" />} />
+          <Route path="/donate" element={<Support key="donate" intent="donate" />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

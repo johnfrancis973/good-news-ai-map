@@ -119,6 +119,14 @@ export type RatingCounts = { useful: number; not_useful: number };
  * a hard filter in the validator, so without a resolved place there is nothing
  * to check the article against and the suggestion waits for a human instead.
  */
+export type SupportRequest = {
+  intent: "sponsor" | "donate";
+  supporter: string;
+  email: string;
+  amount?: string;
+  message?: string;
+};
+
 export type Suggestion = {
   url: string;
   place: string;
