@@ -172,24 +172,56 @@ export function useRateStory(storyId: string | undefined) {
 
 /**
  * The only other write the public is allowed. It reaches a queue, never the
- * site: an operator still has to harvest and validate the article before
- * anything appears on the map. `submit_suggestion` is a security-definer
- * function over a table anon cannot read, so nothing submitted can be read
- * back — not by the submitter, not by anyone else.
+ * site directly: the link is checked by the same pipeline every story on the
+ * map went through, and only that pipeline can publish it.
+ *
+ * This returns as soon as the suggestion is logged — 202, not a verdict. The
+ * checking happens after the response, server-side, so submitting never makes
+ * anyone wait on Firecrawl or OpenAI. The queue stays sealed: there is no way
+ * to read a suggestion back, not even your own.
  */
 export function useSubmitSuggestion() {
   return useMutation({
     mutationFn: async (input: Suggestion): Promise<void> => {
-      const { error } = await supabase.rpc("submit_suggestion", {
-        p_url: input.url,
-        p_place: input.place,
-        p_submitter: input.submitter || null,
-        p_note: input.note || null,
-        p_session_id: getSessionId(),
+      const { data, error } = await supabase.functions.invoke("submit-suggestion", {
+        body: {
+          url: input.url,
+          place: input.place,
+          submitter: input.submitter || null,
+          note: input.note || null,
+          session_id: getSessionId(),
+          latitude: input.latitude ?? null,
+          longitude: input.longitude ?? null,
+        },
       });
-      if (error) throw error;
+
+      // A refusal arrives as a non-2xx body, not a thrown error, and the form
+      // reads the message to tell "fix your input" from "try again later".
+      // Re-throwing it as an Error keeps that distinction working.
+      const refusal = (data as { error?: string } | null)?.error;
+      if (refusal) throw new Error(refusal);
+      if (error) {
+        const body = await readFunctionError(error);
+        throw new Error(body ?? error.message);
+      }
     },
   });
+}
+
+/**
+ * supabase-js wraps a non-2xx function response in a FunctionsHttpError and
+ * hides the body on `context`. The body is where the Postgres message lives,
+ * so without this every validation refusal would read as a network failure.
+ */
+async function readFunctionError(error: unknown): Promise<string | null> {
+  const res = (error as { context?: Response } | null)?.context;
+  if (!res || typeof res.json !== "function") return null;
+  try {
+    const body = await res.json();
+    return typeof body?.error === "string" ? body.error : null;
+  } catch {
+    return null;
+  }
 }
 
 // Place lookup lives in ./geocode, re-exported here so callers have one import.

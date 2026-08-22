@@ -7,3 +7,9 @@ verify_jwt = false
 [functions.geocode]
 # Public read-only helper. No secrets, no paid APIs.
 verify_jwt = false
+
+[functions.submit-suggestion]
+# Public: this is the one write path a browser has to be able to reach. Guarded
+# by the RPC's per-session rate limit and by claim_verification_slot()'s global
+# daily budget, not by a shared secret.
+verify_jwt = false

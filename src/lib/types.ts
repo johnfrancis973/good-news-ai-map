@@ -112,10 +112,18 @@ export type LocationRow = {
 
 export type RatingCounts = { useful: number; not_useful: number };
 
-/** What a visitor sends to the suggestion queue. Never read back. */
+/**
+ * What a visitor sends to the suggestion queue. Never read back.
+ *
+ * The coordinates are what let the link be checked automatically: geography is
+ * a hard filter in the validator, so without a resolved place there is nothing
+ * to check the article against and the suggestion waits for a human instead.
+ */
 export type Suggestion = {
   url: string;
   place: string;
   submitter?: string;
   note?: string;
+  latitude?: number | null;
+  longitude?: number | null;
 };

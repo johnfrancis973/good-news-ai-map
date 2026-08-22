@@ -17,9 +17,28 @@ const OPENAI_MODEL = "gpt-4o-mini";
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 const USER_AGENT = "GoodNewsAIMap/1.0 (hackathon MVP)";
 
-export const MAX_CANDIDATES = 60;
+// Candidates are now scored by snippet triage before anything is scraped, so a
+// smaller budget filled with the best 40 beats a larger one filled by raw
+// search rank — and the run finishes sooner under the rate limit below.
+export const MAX_CANDIDATES = 40;
 const MAX_MARKDOWN_CHARS = 8000;
 const MIN_CONFIDENCE = 0.6;
+
+// How far back a story may have been published. Enforced with an `after:`
+// operator inside the query string, NOT with `tbs`: tbs only applies to the
+// `web` source, so on our news-source passes it was silently doing nothing.
+const SEARCH_WINDOW_DAYS = 365;
+
+// Triage batch size. Small enough that one bad batch is cheap to re-run, large
+// enough that a full candidate set costs a handful of calls.
+const TRIAGE_BATCH = 25;
+
+// Below this many candidates, the themed queries are assumed to have failed to
+// describe the place rather than the place to have no news. MAX_CANDIDATES is a
+// ceiling on scrapes; this is the floor on recall, and they are not the same
+// knob - Munich published nothing out of 18 candidates and never came near the
+// cap of 40.
+const RECALL_FLOOR = 12;
 
 // RATE LIMITS. Measured against the live account: Firecrawl returns HTTP 429
 // at ~10 requests/minute. Exceeding it fails every subsequent call for the rest
@@ -55,6 +74,25 @@ const DOMAIN_BLOCKLIST = [
   "economist.com", "newyorker.com", "reuters.com",
 ];
 
+// The subset of the blocklist worth spending query characters on as server-side
+// `-site:` filters. DOMAIN_BLOCKLIST above still runs on every result — this is
+// a slot-saver, not a replacement for it. Without this, a blocked publisher
+// still occupies one of the 20 rows the search is allowed to return, so we pay
+// for a result we were always going to discard.
+//
+// NOTE: Firecrawl treats includeDomains and excludeDomains as mutually
+// exclusive, so this may only be sent on passes that do NOT restrict to a
+// region's own outlets.
+const SEARCH_EXCLUDE = [
+  // Firecrawl answers 403 "we do not support this site" for these, so every
+  // candidate from them is a guaranteed wasted scrape.
+  "nytimes.com", "wsj.com", "ft.com", "bloomberg.com", "washingtonpost.com",
+  "economist.com", "newyorker.com", "reuters.com",
+  // Never a single citable story.
+  "facebook.com", "x.com", "reddit.com", "pinterest.com", "youtube.com",
+  "linkedin.com", "news.google.com", "wikipedia.org",
+];
+
 // URL paths that are never a reported story: CMS standing pages and corporate
 // press-release sections. Probing Paris surfaced paris.fr/pages/ aid-scheme
 // pages, danone.com/newsroom/communiques-de-presse/ and a ministry /pressrelease/
@@ -74,21 +112,125 @@ const TRACKING_PARAMS = [
 // Event-shaped phrasing beats topic-shaped phrasing: searching "environmental
 // progress" returns directories and policy pages, searching "inaugurates" and
 // "launches" returns reported events.
-const THEMES = [
-  { en: "opens new community project",     fr: "inaugure nouveau projet local" },
-  { en: "launches environmental project",  fr: "lance projet environnemental" },
-  { en: "school students win project",     fr: "eleves ecole projet reussite" },
-  { en: "new health facility opens",       fr: "nouvelle structure sante ouvre" },
-  { en: "local innovation startup wins",   fr: "innovation locale entreprise prix" },
-  { en: "conservation species protected",  fr: "protection espece conservation" },
-  { en: "association awarded volunteers",  fr: "association recompensee benevoles" },
-  { en: "renovated reopens after works",   fr: "renove rouvre apres travaux" },
-  { en: "volunteers restore repair",       fr: "benevoles restaurent reparent" },
-  { en: "funding awarded facility completed", fr: "financement obtenu equipement acheve" },
-  { en: "charity helps residents",         fr: "association aide habitants" },
-  { en: "new cycle path park opens",       fr: "nouvelle piste cyclable parc ouvre" },
-  { en: "research breakthrough university", fr: "decouverte recherche universite" },
+//
+// These were 13 flat keyword strings, one query each. Two problems with that:
+// an unquoted place name matches loosely (a Paris run surfaced Vernon and
+// California), and 13 queries x 3 passes is 39 rate-limited requests before a
+// single article is scraped. Grouped into Boolean queries instead - one per
+// category, place name quoted, verbs and subjects as OR-groups - the same
+// vocabulary costs 5 requests per pass and pins the geography in the query.
+//
+// Keep to TWO OR-groups. A third multiplies the match space and Google starts
+// returning pages that satisfy the groups in unrelated parts of the document.
+const THEME_GROUPS = [
+  {
+    category: "environment",
+    en: {
+      verbs: ["opens", "launches", "restored", "protected", "completed"],
+      subjects: ["park", '"cycle path"', "conservation", "species", "wetland", '"clean-up"'],
+    },
+    fr: {
+      verbs: ["inaugure", "lance", "restaure", "protege", "acheve"],
+      subjects: ["parc", '"piste cyclable"', "conservation", "espece", '"zone humide"', "nettoyage"],
+    },
+  },
+  {
+    category: "community",
+    en: {
+      verbs: ["opens", "reopens", "renovated", "awarded", "restore"],
+      subjects: ['"community centre"', "volunteers", "charity", "residents", "neighbourhood", "refurbishment"],
+    },
+    fr: {
+      verbs: ["inaugure", "rouvre", "renove", "recompense", "restaurent"],
+      subjects: ['"centre social"', "benevoles", "association", "habitants", "quartier", "travaux"],
+    },
+  },
+  {
+    category: "education",
+    en: {
+      verbs: ["win", "awarded", "opens", "completed"],
+      subjects: ["school", "pupils", "students", "college", "library", "apprenticeship"],
+    },
+    fr: {
+      verbs: ["remportent", "recompenses", "inaugure", "acheve"],
+      subjects: ["ecole", "eleves", "etudiants", "college", "bibliotheque", "apprentissage"],
+    },
+  },
+  {
+    category: "health",
+    en: {
+      verbs: ["opens", "launches", "completed", "treated"],
+      subjects: ["clinic", "hospital", '"health centre"', "patients", "screening", "maternity"],
+    },
+    fr: {
+      verbs: ["ouvre", "lance", "acheve", "soigne"],
+      subjects: ["clinique", "hopital", '"centre de sante"', "patients", "depistage", "maternite"],
+    },
+  },
+  {
+    category: "innovation",
+    en: {
+      verbs: ["wins", "launches", "awarded", "developed"],
+      subjects: ["startup", "research", "university", "prize", "breakthrough", "laboratory"],
+    },
+    fr: {
+      verbs: ["remporte", "lance", "recompense", "developpe"],
+      subjects: ["startup", "recherche", "universite", "prix", "decouverte", "laboratoire"],
+    },
+  },
 ];
+
+/**
+ * `"Cayenne" (Guyane OR "French Guiana") (inaugure OR lance) (parc OR ...)
+ *  after:2025-08-22`
+ *
+ * The optional region group is a disambiguator, not a third theme axis: a short
+ * list of names for the surrounding region, used because `country` does not
+ * reliably narrow anything.
+ *
+ * ONLY FOR THE OPEN PASSES. Measured on Cayenne: applying it everywhere cut
+ * candidates from 166 to 56 and cost 20 real stories - a road bridge opening, a
+ * health charity expanding territory-wide, a children's centre - 14 of them
+ * from the region's OWN outlets, because an article naming the town often does
+ * not repeat the region. The homonym problem it solves ("Cayenne" the Porsche,
+ * the pepper, a hamlet in Pezenas) only exists where the search is not already
+ * restricted to local publishers, so that is the only place it is applied.
+ */
+function buildQuery(names, group, lang, after, regionTerms) {
+  const { verbs, subjects } = group[lang];
+  return (
+    `${placeGroup(names)}${regionGroup(regionTerms)} ` +
+    `(${verbs.join(" OR ")}) (${subjects.join(" OR ")}) after:${after}`
+  );
+}
+
+/**
+ * The place axis. A preset may carry several names for the same place and all
+ * of them belong in one OR-group, because a publisher prints one spelling and
+ * not the others.
+ *
+ * Munich is why this exists. Its preset is labelled "München (Munich), Germany"
+ * so the operator sees both spellings, and the old code quoted whatever sat
+ * before the first comma - producing the literal phrase `"München (Munich)"`,
+ * which no German outlet has ever printed. 18 candidates, 0 published.
+ */
+function placeGroup(names) {
+  const quoted = names.map((n) => `"${n}"`);
+  return quoted.length === 1 ? quoted[0] : `(${quoted.join(" OR ")})`;
+}
+
+function regionGroup(regionTerms) {
+  if (!regionTerms?.length) return "";
+  return ` (${regionTerms.map((t) => (t.includes(" ") ? `"${t}"` : t)).join(" OR ")})`;
+}
+
+/**
+ * The place and the window, and nothing else. Only used when the themed passes
+ * come back below RECALL_FLOOR - see searchCandidates().
+ */
+function bareQuery(names, after, regionTerms) {
+  return `${placeGroup(names)}${regionGroup(regionTerms)} after:${after}`;
+}
 
 const FRENCH_HINTS = [
   "guyane", "cayenne", "kourou", "france", "paris", "martinique",
@@ -142,6 +284,39 @@ An ongoing programme reporting a milestone ALREADY REACHED - so many homes
 insulated, a hundredth patient treated, a target met - counts as an event. Works
 that are under way, due, planned or "en cours" have not happened yet: reject them.
 
+BEFORE ANYTHING ELSE, classify the article with event_status. Be strict and
+literal. The word "launches" is not evidence that anything finished.
+
+- "completed": something FINISHED and can be pointed at. A building opened, a
+  service began operating, a prize was handed over, a team returned with a
+  result, a milestone was reached, repairs were done. Someone can go and see it.
+- "announced": a decision, commitment, pledge, budget, signature, partnership,
+  fundraising campaign or contract award for something that does NOT yet exist.
+  "A commitment to build 104 homes" is announced, not completed. Opening a
+  crowdfunding or participatory financing round for a facility that is not built
+  is announced - the money being raised is not the facility existing.
+- "planned": a project, works or scheme described as future, due, upcoming,
+  under way or "en cours". Breaking ground, starting a worksite, "premier
+  chantier lance" or laying a first stone is the START of works, so it is
+  planned - the thing being built still does not exist.
+- "consultation": a survey, poll, citizen consultation, call for views, call for
+  projects, invitation to apply, tender, or an available grant or aid scheme.
+  Asking people what they want is never a result.
+- "guide": a listing, what's-on, travel guide, how-to, explainer or preview of a
+  recurring event, whether or not the event itself is real.
+- "none": no specific event at all.
+
+THE TEST FOR "completed": could an ordinary person go there now and find the
+thing, or did it verifiably already occur? If what exists so far is money,
+paperwork, a signature, a decision or a building site, it is not completed.
+
+ONLY "completed" belongs on this map. If an article is genuinely both - a
+finished thing plus a future promise - classify on the FINISHED part. If you are
+torn between "completed" and anything else, it is not "completed".
+
+Set event_summary to the single thing that already happened, in one short clause,
+in the article's own terms. If event_status is not "completed", set it to null.
+
 THE TEST IS WHETHER SOMETHING GOT BETTER FOR ORDINARY PEOPLE THERE. Ask who is
 better off and how. If the honest answer is "investors", "a developer" or "no
 one yet", reject it.
@@ -188,9 +363,15 @@ const DECISION_SCHEMA = {
     "accepted", "rejection_reason", "confidence", "category", "summary",
     "why_it_matters", "lessons", "actions", "future_outlook", "ai_relevance",
     "ai_outlook", "location_hint", "published_date", "source_name",
+    "event_status", "event_summary",
   ],
   properties: {
     accepted: { type: "boolean" },
+    event_status: {
+      type: "string",
+      enum: ["completed", "announced", "planned", "consultation", "guide", "none"],
+    },
+    event_summary: { type: ["string", "null"] },
     rejection_reason: { type: ["string", "null"] },
     confidence: { type: "number" },
     category: { type: "string", enum: CATEGORIES },
@@ -225,6 +406,18 @@ class RateLimiter {
 
 const firecrawlLimiter = new RateLimiter(FIRECRAWL_RPM);
 
+/**
+ * Raised when the ACCOUNT cannot serve requests at all - out of credits, or a
+ * bad key. Distinct from a page that simply failed, because the correct
+ * response is to stop the run, not to move on to the next candidate.
+ */
+export class FirecrawlAccountError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "FirecrawlAccountError";
+  }
+}
+
 async function firecrawlFetch(path, body, log) {
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     await firecrawlLimiter.take();
@@ -257,6 +450,16 @@ async function firecrawlFetch(path, body, log) {
       log(`HTTP ${res.status} on ${path}, backing off ${Math.round(waitMs / 1000)}s`);
       await new Promise((r) => setTimeout(r, waitMs));
       continue;
+    }
+
+    // 402 out of credits, 401 bad key. Every subsequent request will fail the
+    // same way, so returning null here would march through the whole candidate
+    // list at 8 rpm, reject each one as "scrape produced no usable content",
+    // and leave a trail of perfectly good URLs marked as failures. Stop instead.
+    if (res.status === 402 || res.status === 401) {
+      throw new FirecrawlAccountError(
+        `HTTP ${res.status} on ${path}: ${(await res.text()).slice(0, 200)}`,
+      );
     }
 
     if (!res.ok) {
@@ -303,7 +506,7 @@ export function normalizeUrl(raw) {
   }
 }
 
-function isBlocked(url) {
+export function isBlocked(url) {
   const lower = url.toLowerCase();
   return DOMAIN_BLOCKLIST.some((d) => lower.includes(d));
 }
@@ -334,7 +537,7 @@ export function cleanTitle(raw, sourceName) {
 }
 
 /** Article-shaped URLs have a dated path or a multi-word slug. */
-function looksLikeArticle(url) {
+export function looksLikeArticle(url) {
   try {
     const p = new URL(url).pathname;
     if (/\.(pdf|jpg|png|zip|doc|docx)$/i.test(p)) return false;
@@ -362,13 +565,35 @@ function firstString(v) {
   return null;
 }
 
+/**
+ * The text Firecrawl already hands back with every search result. With
+ * `highlights: true` it is a query-relevant excerpt; otherwise it falls back to
+ * the page description. Either way it arrives free with the search response,
+ * which is what makes triage cheap: judging on this costs no extra request.
+ */
+function snippetOf(r) {
+  const h = r?.highlights;
+  const text =
+    (Array.isArray(h) ? h.filter((x) => typeof x === "string").join(" ... ") : firstString(h)) ||
+    firstString(r?.snippet) ||
+    firstString(r?.description) ||
+    "";
+  return text.replace(/\s+/g, " ").trim().slice(0, 400) || null;
+}
+
 export function toIso(value) {
   const s = firstString(value);
   if (!s) return null;
   const d = new Date(s);
   if (isNaN(d.getTime())) return null;
   const year = d.getUTCFullYear();
-  if (year < 1990 || year > new Date().getUTCFullYear() + 1) return null;
+  if (year < 1990) return null;
+  // A publication date in the future is always a parse error, never a fact. A
+  // Cayenne story headlined "27 avril 2026" came back dated 2026-08-27 because
+  // the page carried a later date elsewhere; the old year+1 bound let it
+  // through and the map showed a story published five days from now. Two days
+  // of slack covers timezone skew on a genuinely fresh article.
+  if (d.getTime() > Date.now() + 2 * 864e5) return null;
   return d.toISOString();
 }
 
@@ -394,32 +619,80 @@ export async function searchCandidates(firecrawlKey, payload, log) {
   const locationName = payload.location;
   const french = usesFrench(locationName);
   const outlets = payload.outlets ?? [];
-  const shortName = locationName.split(",")[0].trim();
+  // A preset may name the place several ways (`search_names`); the label before
+  // the first comma is only the fallback.
+  const searchNames = payload.search_names?.length
+    ? payload.search_names
+    : [locationName.split(",")[0].trim()];
 
+  // Freshness lives in the query, not in tbs. tbs is kept because it costs
+  // nothing and starts working the day a `web` pass is added.
+  const after = new Date(Date.now() - SEARCH_WINDOW_DAYS * 864e5)
+    .toISOString()
+    .slice(0, 10);
+
+  // Geography, applied at the search engine instead of only in the validator
+  // prompt. Every off-region candidate filtered here is a scrape and a model
+  // call we never have to spend.
+  const geo = {
+    location: locationName,
+    country: String(payload.country_code ?? "us").toLowerCase(),
+  };
+
+  const regionTerms = payload.region_terms ?? [];
   const override = payload.queries?.length ? payload.queries.slice(0, 16) : null;
-  const themes = override ?? THEMES.map((t) => `${shortName} ${french ? t.fr : t.en}`);
 
+  // THEME_GROUPS carries an English and a French vocabulary and nothing else.
+  // A preset may still declare its own language (`lang: "de"`), and when it does
+  // and we have no words for it, the themed queries fall back to English - which
+  // German, Dutch and Icelandic outlets do not print. Munich is the worked
+  // example: 18 candidates, every one of them found by an English query, none
+  // of them publishable. So record that the vocabulary missed and force the bare
+  // pass below, where the place name is the whole query and language does not
+  // enter into it. Triage and the validator both read the article in whatever
+  // language it was written.
+  const wanted = payload.lang ?? (french ? "fr" : "en");
+  const lang = THEME_GROUPS[0][wanted] ? wanted : "en";
+  const noVocabulary = lang !== wanted;
+  if (noVocabulary) {
+    log(`no ${wanted} theme vocabulary - themed passes run in English, bare pass forced`);
+  }
+  // Outlet pass: no disambiguator. The allowlist already guarantees geography,
+  // so every region term here only costs recall.
+  const themes = override ?? THEME_GROUPS.map((g) => buildQuery(searchNames, g, lang, after, []));
+  // Open passes: disambiguated, because nothing else constrains them.
+  const openThemes =
+    override ?? THEME_GROUPS.map((g) => buildQuery(searchNames, g, lang, after, regionTerms));
+
+  const news = { sources: [{ type: "news" }] };
   const passes = [];
   if (outlets.length > 0) {
-    passes.push({ label: "news+outlets", themes, opts: { sources: [{ type: "news" }], includeDomains: outlets } });
+    // includeDomains and excludeDomains are mutually exclusive, so this pass
+    // relies on isBlocked() alone - which is fine, the outlet list is already
+    // an allowlist of exactly the publishers we want.
+    passes.push({ label: "news+outlets", themes, opts: { ...news, includeDomains: outlets } });
   }
-  passes.push({ label: "news", themes, opts: { sources: [{ type: "news" }] } });
+  passes.push({
+    label: "news",
+    themes: openThemes,
+    opts: { ...news, excludeDomains: SEARCH_EXCLUDE },
+  });
 
   // A French-speaking place is still covered by English-language outlets, and the
   // French-only query set makes that coverage invisible. Search it too.
   if (french && !override) {
     passes.push({
       label: "news+en",
-      themes: THEMES.map((t) => `${shortName} ${t.en}`),
-      opts: { sources: [{ type: "news" }] },
+      themes: THEME_GROUPS.map((g) => buildQuery(searchNames, g, "en", after, regionTerms)),
+      // (also an open pass, so also disambiguated)
+      opts: { ...news, excludeDomains: SEARCH_EXCLUDE },
     });
   }
 
   const seen = new Map();
   const queriesRun = [];
 
-  for (let passIndex = 0; passIndex < passes.length; passIndex++) {
-    const pass = passes[passIndex];
+  const runPass = async (pass, passIndex) => {
     for (const query of pass.themes) {
       queriesRun.push(`[${pass.label}] ${query}`);
       const body = {
@@ -427,6 +700,8 @@ export async function searchCandidates(firecrawlKey, payload, log) {
         query,
         limit: 20,
         tbs: "qdr:y",
+        highlights: true,
+        ...geo,
         ...pass.opts,
       };
       const json = await firecrawlFetch("/search", body, log);
@@ -443,10 +718,51 @@ export async function searchCandidates(firecrawlKey, payload, log) {
         const url = normalizeUrl(typeof r?.url === "string" ? r.url : "");
         if (!url || seen.has(url) || isBlocked(url)) continue;
         if (!looksLikeArticle(url)) continue;
-        seen.set(url, { url, title: firstString(r?.title), pass: pass.label, rank, passIndex });
+        seen.set(url, {
+          url,
+          title: firstString(r?.title),
+          // Carried so triage can judge this candidate without a scrape.
+          snippet: snippetOf(r),
+          pass: pass.label,
+          rank,
+          passIndex,
+        });
         kept++;
       }
       log(`${pass.label}: ${rows.length} results, ${kept} new  <- ${query}`);
+    }
+  };
+
+  for (let passIndex = 0; passIndex < passes.length; passIndex++) {
+    await runPass(passes[passIndex], passIndex);
+  }
+
+  // RECALL FLOOR. Every themed query demands a verb group AND a subject group in
+  // the same headline. A city satisfies that; Minnertsga, 500 people and no
+  // newsroom of its own, returned 4 URLs across 10 queries and one of them was a
+  // house listing. When the themed passes come back this thin, ask for the place
+  // and the window alone and let snippet triage do the filtering - triage is one
+  // OpenAI call per 25 candidates, not a rate-limited scrape, so the extra noise
+  // is nearly free. Skipped when the caller supplied its own queries.
+  if ((seen.size < RECALL_FLOOR || noVocabulary) && !override) {
+    log(`${seen.size} candidates from the themed passes - retrying on the place name alone`);
+    const fallback = [];
+    if (outlets.length > 0) {
+      fallback.push({
+        label: "bare+outlets",
+        themes: [bareQuery(searchNames, after, [])],
+        opts: { ...news, includeDomains: outlets },
+      });
+    }
+    fallback.push({
+      label: "bare",
+      themes: [bareQuery(searchNames, after, regionTerms)],
+      opts: { ...news, excludeDomains: SEARCH_EXCLUDE },
+    });
+    for (let i = 0; i < fallback.length; i++) {
+      // passIndex continues past the themed passes, so a themed hit still wins
+      // any rank tie against a bare-query hit in the sort below.
+      await runPass(fallback[i], passes.length + i);
     }
   }
 
@@ -462,6 +778,169 @@ export async function searchCandidates(firecrawlKey, payload, log) {
   );
 
   return { candidates, queriesRun };
+}
+
+// ---------------------------------------------------------------- triage
+
+// Deliberately a SHALLOWER filter than SYSTEM_PROMPT. It sees a headline and a
+// one-line excerpt, so it can only be trusted to spot what is obvious at that
+// range. Everything it keeps still faces the full validator on the real text.
+const TRIAGE_PROMPT = `You are pre-screening search results for a constructive ("good news") local news map.
+
+For each numbered result you get only a headline and a short excerpt. That is not enough to judge a story properly, and you are NOT being asked to. You are only removing results that are ALREADY CLEARLY unsuitable at a glance.
+
+DROP a result (keep=false) only when the headline or excerpt makes it obvious that it is one of:
+- about a different place than the target geography below
+- primarily bad news: a crime, death, disaster, accident, scandal, closure, layoff, strike or dispute
+- a memorial, vigil, obituary or tribute
+- a protest, rally, petition or campaign against something
+- an open call for projects, an invitation to apply, a tender, or an aid/grant/subsidy scheme merely being made available
+- a ranking, index, listicle or "best of" roundup
+- sports results, transfers, celebrity or royal news
+- weather, traffic, market or share-price reporting
+- an advertisement, sponsored post or product promotion
+- a homepage, section index, tag page or live blog rather than one article
+
+KEEP everything else, including anything you are unsure about. A kept result that turns out to be unusable costs very little. A dropped result that was a real story is lost permanently and cannot be recovered. When the headline is vague, ambiguous, or you simply cannot tell: keep it.
+
+Also give each result a score from 0 to 1: how likely it looks, at this range, to be a specific positive local development that already happened. Reported events that have already occurred - an opening, a completion, an award, a result - score higher than things described as planned, due or under way. Set score even for results you drop.
+
+Answer for every result you are given, using the index numbers supplied.`;
+
+const TRIAGE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["verdicts"],
+  properties: {
+    verdicts: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["index", "keep", "score", "reason"],
+        properties: {
+          index: { type: "integer" },
+          keep: { type: "boolean" },
+          score: { type: "number" },
+          reason: { type: ["string", "null"] },
+        },
+      },
+    },
+  },
+};
+
+/** One structured-output call. Returns the parsed object, or null on failure. */
+async function openaiJson(openaiKey, { system, user, schemaName, schema, temperature }, log) {
+  const res = await fetch(OPENAI_URL, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      temperature,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: schemaName, strict: true, schema },
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    log(`openai failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+    return null;
+  }
+
+  const body = await res.json();
+  const content = body?.choices?.[0]?.message?.content;
+  if (typeof content !== "string") return null;
+
+  try {
+    return JSON.parse(content);
+  } catch {
+    log("openai returned unparseable content");
+    return null;
+  }
+}
+
+/**
+ * Score candidates on their search snippet BEFORE anything is scraped.
+ *
+ * Why this exists: Firecrawl is the rate-limited leg at ~8 requests/minute, and
+ * every candidate the old code processed cost one scrape from that budget plus
+ * a full validation call - only to be rejected for something the headline
+ * already gave away ("primarily negative", "not in the target geography",
+ * "a call for projects"). Snippets arrive free with the search response and
+ * OpenAI is not rate limited here, so a handful of cheap batched calls buys
+ * back scrape slots that would otherwise have been thrown away.
+ *
+ * Fails OPEN. If a batch errors the whole batch is kept at a neutral score:
+ * the real validator is downstream, and losing candidates to an API blip is
+ * worse than scraping a few extra.
+ */
+export async function triageCandidates(openaiKey, candidates, payload, log) {
+  if (!candidates.length) return { keep: [], dropped: [] };
+
+  const keep = [];
+  const dropped = [];
+
+  for (let start = 0; start < candidates.length; start += TRIAGE_BATCH) {
+    const batch = candidates.slice(start, start + TRIAGE_BATCH);
+    const listing = batch
+      .map((c, i) => {
+        const parts = [`[${i}] ${c.title ?? "(no title)"}`];
+        parts.push(`    source: ${new URL(c.url).hostname}`);
+        if (c.snippet) parts.push(`    excerpt: ${c.snippet}`);
+        return parts.join("\n");
+      })
+      .join("\n\n");
+
+    const json = await openaiJson(
+      openaiKey,
+      {
+        system: TRIAGE_PROMPT,
+        user: `TARGET GEOGRAPHY: ${payload.location}\n\nRESULTS:\n${listing}`,
+        schemaName: "triage_verdicts",
+        schema: TRIAGE_SCHEMA,
+        temperature: 0,
+      },
+      log,
+    );
+
+    const verdicts = new Map();
+    for (const v of json?.verdicts ?? []) {
+      if (Number.isInteger(v?.index) && v.index >= 0 && v.index < batch.length) {
+        verdicts.set(v.index, v);
+      }
+    }
+
+    if (!json) log(`triage batch ${start}-${start + batch.length} failed, keeping all`);
+
+    for (let i = 0; i < batch.length; i++) {
+      const v = verdicts.get(i);
+      // No verdict for this index means the model skipped it. Keep it.
+      if (!v || v.keep !== false) {
+        keep.push({ ...batch[i], score: typeof v?.score === "number" ? v.score : 0.5 });
+      } else {
+        dropped.push({
+          url: batch[i].url,
+          title: batch[i].title,
+          score: typeof v.score === "number" ? v.score : 0,
+          reason: v.reason ?? "dropped in snippet triage",
+        });
+      }
+    }
+  }
+
+  // Best-looking first. Rank interleave stays as the tiebreak so that within an
+  // equal score the front of the list is still the best hit from every query
+  // rather than one query's dregs.
+  keep.sort((a, b) => b.score - a.score || a.rank - b.rank || a.passIndex - b.passIndex);
+
+  log(`triage: ${keep.length} kept, ${dropped.length} dropped before any scrape`);
+  return { keep, dropped };
 }
 
 // ---------------------------------------------------------------- scrape
@@ -503,52 +982,49 @@ export async function scrapeArticle(firecrawlKey, url, log) {
 // ---------------------------------------------------------------- enrich
 
 export async function enrichArticle(openaiKey, args, log) {
-  const res = await fetch(OPENAI_URL, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
+  return openaiJson(
+    openaiKey,
+    {
+      system: SYSTEM_PROMPT,
+      user:
+        `TARGET GEOGRAPHY: ${args.locationName}\n` +
+        `SOURCE URL: ${args.url}\n` +
+        `SOURCE TITLE: ${args.title ?? "(unknown)"}\n\n` +
+        `ARTICLE TEXT:\n"""\n${args.markdown}\n"""`,
+      schemaName: "story_decision",
+      schema: DECISION_SCHEMA,
       temperature: 0.2,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content:
-            `TARGET GEOGRAPHY: ${args.locationName}\n` +
-            `SOURCE URL: ${args.url}\n` +
-            `SOURCE TITLE: ${args.title ?? "(unknown)"}\n\n` +
-            `ARTICLE TEXT:\n"""\n${args.markdown}\n"""`,
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "story_decision", strict: true, schema: DECISION_SCHEMA },
-      },
-    }),
-  });
-
-  if (!res.ok) {
-    log(`openai failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-    return null;
-  }
-
-  const body = await res.json();
-  const content = body?.choices?.[0]?.message?.content;
-  if (typeof content !== "string") return null;
-
-  try {
-    return JSON.parse(content);
-  } catch {
-    log("openai returned unparseable content");
-    return null;
-  }
+    },
+    log,
+  );
 }
+
+// Everything that is not a finished, pointable-at event. Kept as a deterministic
+// gate rather than prose in the prompt because prose did not hold: a Cayenne
+// harvest published a citizen consultation, a hostel's carnival travel guide, a
+// crowdfunding launch and a pledge to build housing, all at confidence 0.9. The
+// model is reliable at LABELLING these; it was unreliable at deciding they
+// disqualify. So it labels, and this function decides.
+const NON_EVENT_REASONS = {
+  announced: "announced or pledged, but nothing has happened yet",
+  planned: "planned or under way, not yet completed",
+  consultation: "a consultation, survey, call for projects or available scheme",
+  guide: "a guide, listing or preview rather than a reported event",
+  none: "no specific event",
+};
 
 /** Rejects on the model's verdict, low confidence, or structural incompleteness. */
 export function verdictFor(decision) {
   if (!decision) return { ok: false, reason: "enrichment failed" };
   if (!decision.accepted) {
     return { ok: false, reason: decision.rejection_reason ?? "rejected by validator" };
+  }
+  if (decision.event_status !== "completed") {
+    const why = NON_EVENT_REASONS[decision.event_status] ?? "not a completed event";
+    return { ok: false, reason: `${why} (event_status=${decision.event_status})` };
+  }
+  if (!decision.event_summary) {
+    return { ok: false, reason: "marked completed but names nothing that happened" };
   }
   if (!(decision.confidence >= MIN_CONFIDENCE)) {
     return { ok: false, reason: `confidence ${decision.confidence} below ${MIN_CONFIDENCE}` };
@@ -621,6 +1097,25 @@ export async function geocode(place, bounds, log) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Belt and braces on freshness. `after:` in the query is a request, not a
+ * guarantee - a Cayenne run published a 2023 article through it - so the date
+ * we actually resolved from the page is checked against the same window before
+ * anything is persisted.
+ *
+ * An article with NO date is not stale, just undated, and is left alone:
+ * plenty of legitimate local outlets publish without machine-readable dates,
+ * and rejecting them would cost far more than the occasional old story.
+ */
+export function staleReason(row) {
+  if (!row?.published_at) return null;
+  const ms = Date.parse(row.published_at);
+  if (!Number.isFinite(ms)) return null;
+  const ageDays = Math.round((Date.now() - ms) / 864e5);
+  if (ageDays <= SEARCH_WINDOW_DAYS) return null;
+  return `published ${ageDays} days ago, outside the ${SEARCH_WINDOW_DAYS}-day window`;
 }
 
 /** Builds the persisted column set. The scraped markdown is NOT part of it. */
@@ -729,7 +1224,83 @@ async function reject(supabase, storyId, reason) {
     .eq("id", storyId);
 }
 
-async function finish(supabase, jobId, status, stats, errorMessage) {
+/**
+ * Scrape, validate, geocode and publish ONE already-claimed story row.
+ *
+ * Split out of runPipeline so a single submitted link can go through exactly
+ * the same gates a harvested one does. There is deliberately no second, softer
+ * path: if this function is not the only way a row reaches 'published', the
+ * suggestion queue becomes a way around verdictFor().
+ *
+ * `item` is { id, url, title } where id is a row already claimed as
+ * 'processing'. Returns { published: true, title } or { published: false,
+ * reason }, and leaves the row 'rejected' with that reason in either failure
+ * case.
+ *
+ * FirecrawlAccountError is rethrown untouched: the ACCOUNT failed, not the
+ * article, and only the caller knows which other claims it has to release.
+ */
+export async function processCandidate(supabase, keys, item, payload, index, log) {
+  const say = log ?? (() => {});
+
+  const refuse = async (reason) => {
+    await reject(supabase, item.id, reason);
+    return { published: false, reason };
+  };
+
+  try {
+    const scraped = await scrapeArticle(keys.firecrawl, item.url, say);
+    if (!scraped) return await refuse("scrape produced no usable content");
+
+    const decision = await enrichArticle(
+      keys.openai,
+      {
+        url: item.url,
+        title: scraped.title ?? item.title,
+        markdown: scraped.markdown,
+        locationName: payload.location,
+      },
+      say,
+    );
+
+    const verdict = verdictFor(decision);
+    if (!verdict.ok) {
+      say(`rejected: ${verdict.reason.slice(0, 90)}`);
+      return await refuse(verdict.reason);
+    }
+
+    const row = await buildStoryRow(decision, scraped, item, payload, index, say);
+    if (!row) {
+      return await refuse("location could not be verified in the target region");
+    }
+
+    const stale = staleReason(row);
+    if (stale) {
+      say(`rejected: ${stale}`);
+      return await refuse(stale);
+    }
+
+    delete row.source_url; // already set when the row was claimed
+
+    const { error: updateError } = await supabase
+      .from("stories")
+      .update({ ...row, rejection_reason: null })
+      .eq("id", item.id);
+
+    if (updateError) {
+      return await refuse(`publish failed: ${updateError.message}`);
+    }
+
+    say(`published: ${String(row.title).slice(0, 70)}`);
+    return { published: true, title: row.title };
+  } catch (err) {
+    if (err instanceof FirecrawlAccountError) throw err;
+    // Any other failure leaves the row non-public.
+    return await refuse(`error: ${String(err).slice(0, 300)}`);
+  }
+}
+
+export async function finish(supabase, jobId, status, stats, errorMessage) {
   await supabase
     .from("ingestion_jobs")
     .update({
@@ -777,15 +1348,32 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
     }
 
     // --- STEP 3: DEDUPLICATE BEFORE SCRAPING --------------------------
-    // A URL we already hold must never cost a scrape or a model call.
+    // A URL we already hold must never cost a scrape or a model call. This runs
+    // before triage, not after: the database query is free and triage is not.
     const { data: existing } = await supabase
       .from("stories")
       .select("source_url")
       .in("source_url", candidates.map((c) => c.url));
 
     const known = new Set((existing ?? []).map((r) => r.source_url));
-    const fresh = candidates.filter((c) => !known.has(c.url)).slice(0, maxCandidates);
-    log(`${known.size} already known, ${fresh.length} to process`);
+    const unseen = candidates.filter((c) => !known.has(c.url));
+    log(`${known.size} already known, ${unseen.length} unseen`);
+
+    if (unseen.length === 0) {
+      await finish(supabase, jobId, "completed", stats);
+      return stats;
+    }
+
+    // --- STEP 3b: TRIAGE ON SNIPPETS BEFORE SCRAPING ------------------
+    // Scrapes are the scarce resource, so spend them on the candidates that
+    // still look plausible from their headline and excerpt.
+    const { keep, dropped } = await triageCandidates(keys.openai, unseen, payload, log);
+    const fresh = keep.slice(0, maxCandidates);
+    log(
+      `${dropped.length} dropped in triage, ` +
+        `${keep.length - fresh.length} over the ${maxCandidates} cap, ` +
+        `${fresh.length} to process`,
+    );
 
     if (fresh.length === 0) {
       await finish(supabase, jobId, "completed", stats);
@@ -820,55 +1408,26 @@ export async function runPipeline(supabase, keys, payload, jobId, locationId, lo
     for (let index = 0; index < claimed.length; index++) {
       const item = claimed[index];
       try {
-        const scraped = await scrapeArticle(keys.firecrawl, item.url, log);
-        if (!scraped) {
-          await reject(supabase, item.id, "scrape produced no usable content");
-          stats.rejected++;
-          continue;
-        }
-
-        const decision = await enrichArticle(
-          keys.openai,
-          {
-            url: item.url,
-            title: scraped.title ?? item.title,
-            markdown: scraped.markdown,
-            locationName: payload.location,
-          },
-          log,
-        );
-
-        const verdict = verdictFor(decision);
-        if (!verdict.ok) {
-          await reject(supabase, item.id, verdict.reason);
-          stats.rejected++;
-          log(`rejected: ${verdict.reason.slice(0, 90)}`);
-          continue;
-        }
-
-        const row = await buildStoryRow(decision, scraped, item, payload, index, log);
-        if (!row) {
-          await reject(supabase, item.id, "location could not be verified in the target region");
-          stats.rejected++;
-          continue;
-        }
-        delete row.source_url; // already set when the row was claimed
-
-        const { error: updateError } = await supabase
-          .from("stories")
-          .update({ ...row, rejection_reason: null })
-          .eq("id", item.id);
-
-        if (updateError) {
-          await reject(supabase, item.id, `publish failed: ${updateError.message}`);
-          stats.rejected++;
-          continue;
-        }
-
-        stats.published++;
-        log(`published: ${String(row.title).slice(0, 70)}`);
+        const outcome = await processCandidate(supabase, keys, item, payload, index, log);
+        if (outcome.published) stats.published++;
+        else stats.rejected++;
       } catch (err) {
-        // Any failure leaves the row non-public.
+        if (err instanceof FirecrawlAccountError) {
+          // The ACCOUNT failed, not the article. Release every row this run
+          // claimed but never finished: a 'rejected' row counts as known to the
+          // dedupe query above, so leaving them would blacklist a set of
+          // perfectly good URLs from ever being ingested again.
+          const unfinished = claimed.slice(index).map((c) => c.id);
+          await supabase
+            .from("stories")
+            .delete()
+            .in("id", unfinished)
+            .eq("status", "processing");
+          log(`aborting: ${err.message}`);
+          log(`released ${unfinished.length} unfinished claims for a later run`);
+          throw err;
+        }
+        // Any other failure leaves the row non-public.
         await reject(supabase, item.id, `error: ${String(err).slice(0, 300)}`);
         stats.rejected++;
       } finally {

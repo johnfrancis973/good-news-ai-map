@@ -19,7 +19,8 @@ Two loops that meet only through Postgres.
 
 ```
 Location → Firecrawl Search → candidate URLs → deduplicate
-        → Firecrawl Scrape → OpenAI validation/enrichment → Postgres
+        → snippet triage → Firecrawl Scrape
+        → OpenAI validation/enrichment → Postgres
 ```
 
 **Loop B — browsing (fast, what users actually touch)**
@@ -53,7 +54,9 @@ src/pages/Submit.tsx                  public suggestion form -> queue, not the m
 src/components/StoryMap.tsx           react-leaflet + OSM
 supabase/migrations/0001_init.sql     schema, RLS, RPCs
 supabase/migrations/0002_suggestions.sql  the suggestion queue
+supabase/migrations/0003_suggestion_verification.sql  auto-check + daily spend cap
 supabase/functions/ingest-location/   write path: pipeline.js (shared) + index.ts (HTTP)
+supabase/functions/submit-suggestion/ public: logs a link, then checks it in the background
 supabase/functions/geocode/           Nominatim proxy, no keys
 scripts/ingest.mjs                    operator CLI -> deployed edge function
 scripts/ingest-local.mjs              same pipeline, run locally
@@ -94,7 +97,9 @@ where the edge functions read them from.
 
 Apply `supabase/migrations/0001_init.sql`, then `0002_suggestions.sql` (Lovable
 MCP `query_database`, or the Supabase SQL editor). Both are already applied on
-the live project.
+the live project. `0003_suggestion_verification.sql` is **not yet applied** —
+apply it the same way, then deploy `supabase/functions/submit-suggestion`, or
+`/submit` will keep writing to the queue without checking anything.
 
 ### 2b. Check it works
 
@@ -102,9 +107,10 @@ the live project.
 node scripts/verify.mjs
 ```
 
-Twenty-nine acceptance checks against the live API: the read path, every
-row-level security guarantee, the anonymous rating flow and the suggestion
-queue. Exits non-zero on failure.
+Acceptance checks against the live API: the read path, every row-level
+security guarantee, the anonymous rating flow and the suggestion queue —
+including that a submission cannot be read back with its own id and that the
+publishable key cannot claim a verification slot. Exits non-zero on failure.
 
 ### 3. Run
 
@@ -140,16 +146,22 @@ completely unaffected.
 
 ### 5. Triage what the public suggested
 
-`/submit` lets a visitor send in a link. It reaches a queue, never the site.
+`/submit` lets a visitor send in a link. It reaches a queue, never the site
+directly. Most links are now judged automatically: `submit-suggestion` logs the
+submission, answers the browser immediately, and then runs the link through the
+same `processCandidate()` every harvested story goes through.
 
 ```sh
 node scripts/suggestions.mjs                    # everything still 'new'
+node scripts/suggestions.mjs --status rejected  # what the check refused, and why
 node scripts/suggestions.mjs --mark <id> harvested
 ```
 
 Needs `SUPABASE_SERVICE_ROLE_KEY`: the publishable key cannot read that table,
-which is the point. Harvesting a suggestion means running it through the same
-pipeline as everything else — a suggestion is a lead, not a story.
+which is the point. `new` now means **needs a person** — a place the geocoder
+could not resolve, a submission that arrived after the day's verification budget
+was spent, or a machine rejection worth overruling. A suggestion is still a
+lead, not a story: only the pipeline can publish one.
 
 ---
 
@@ -170,10 +182,15 @@ pipeline as everything else — a suggestion is a lead, not a story.
   ratings (one vote per session, enforced by a unique index) and story
   suggestions (validated, rate limited, into a table nobody can read back).
 - **A suggestion is not a publication.** `/submit` writes to
-  `story_suggestions`, which no public key can select from. An operator still
-  harvests and validates the article before it can appear anywhere.
-- **Ingestion is gated** behind an admin token, so the public cannot burn
-  Firecrawl or OpenAI credits.
+  `story_suggestions`, which no public key can select from. A submitted link
+  reaches the map only by passing the same validation as everything else —
+  there is one publishing routine, `processCandidate()`, and no way around it.
+- **Location ingestion is gated** behind an admin token, so the public cannot
+  start a harvest. Submission verification is public by necessity, so it is
+  bounded instead: free checks before any paid call, five submissions per
+  session per day, and a hard global ceiling of 50 verifications per 24 hours
+  (`claim_verification_slot`, service-role only). Past the ceiling, submissions
+  still succeed and simply wait for a person.
 
 ---
 

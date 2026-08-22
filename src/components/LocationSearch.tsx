@@ -122,7 +122,13 @@ export function LocationSearch({
     <div ref={boxRef} className="relative w-full">
       <div
         className={cn(
-          "flex items-center gap-2.5 bg-card transition focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/20",
+          // text-foreground is not decoration: this field sits inside the dark
+          // hero band, which sets text-forest-foreground on everything under
+          // it. The field's own surface is bg-card (white), so without an
+          // explicit colour the typed text inherits near-white ON white and
+          // disappears. The placeholder sets its own colour, which is why the
+          // field looks fine until someone starts typing.
+          "flex items-center gap-2.5 bg-card text-foreground transition focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/20",
           pill
             ? "rounded-full border border-transparent p-[7px] pl-[22px] shadow-raised"
             : "rounded-full border border-input px-4 py-2",
@@ -171,8 +177,11 @@ export function LocationSearch({
         </button>
       </div>
 
+      {/* text-foreground for the same reason as the field above: a bg-card
+          surface inside the dark hero band needs its own text colour, or the
+          place names render white on white. */}
       {open && suggestions.length > 0 && (
-        <ul className="absolute z-40 mt-2 w-full overflow-hidden rounded-md border border-border bg-card shadow-raised">
+        <ul className="absolute z-40 mt-2 w-full overflow-hidden rounded-md border border-border bg-card text-foreground shadow-raised">
           {suggestions.map((s, i) => (
             <li key={`${s.name}-${i}`}>
               <button

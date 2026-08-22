@@ -17,8 +17,11 @@ import process from "node:process";
 import {
   buildStoryRow,
   enrichArticle,
+  FirecrawlAccountError,
   scrapeArticle,
   searchCandidates,
+  staleReason,
+  triageCandidates,
   verdictFor,
   MAX_CANDIDATES,
 } from "../supabase/functions/ingest-location/pipeline.js";
@@ -64,15 +67,26 @@ const log = (m) =>
 console.log(`\n  Harvesting: ${payload.location} (${payload.latitude}, ${payload.longitude})`);
 console.log(`  Firecrawl is rate limited, so this runs serially and takes minutes.\n`);
 
-const { candidates, queriesRun } = await searchCandidates(cfg.firecrawlKey, payload, log);
+let candidates, queriesRun;
+try {
+  ({ candidates, queriesRun } = await searchCandidates(cfg.firecrawlKey, payload, log));
+} catch (err) {
+  if (err instanceof FirecrawlAccountError) die(`Firecrawl: ${err.message}`);
+  throw err;
+}
 log(`${candidates.length} unique article-shaped candidates`);
 
 const unseen = candidates.filter((c) => !known.has(c.url));
+log(`${candidates.length - unseen.length} already known, ${unseen.length} unseen`);
+
+// Snippet triage before any scrape. Cheap, and it decides which candidates are
+// worth the rate-limited requests below.
+const { keep, dropped } = await triageCandidates(cfg.openaiKey, unseen, payload, log);
 const cap = Math.min(payload.max_candidates ?? MAX_CANDIDATES, 100);
-const fresh = unseen.slice(0, cap);
+const fresh = keep.slice(0, cap);
 log(
-  `${candidates.length - unseen.length} already known, ` +
-    `${unseen.length - fresh.length} over the ${cap} cap, ${fresh.length} to process`,
+  `${dropped.length} dropped in triage, ` +
+    `${keep.length - fresh.length} over the ${cap} cap, ${fresh.length} to process`,
 );
 
 const published = [];
@@ -112,10 +126,32 @@ for (let i = 0; i < fresh.length; i++) {
       log(`rejected (location): ${String(decision.location_hint).slice(0, 60)}`);
       continue;
     }
-    // location_hint is kept for debugging only; it is never a database column.
-    published.push({ ...row, _location_hint: decision.location_hint ?? null });
+    const stale = staleReason(row);
+    if (stale) {
+      rejected.push({ url: item.url, reason: stale });
+      log(`rejected: ${stale}`);
+      continue;
+    }
+
+    // Underscored fields are debugging aids kept in the harvest file only; none
+    // of them is a database column. event_status drives the gate in
+    // verdictFor(), so record what the model actually said - otherwise a wrong
+    // publish gives no way to tell a bad label from a bad rule.
+    published.push({
+      ...row,
+      _location_hint: decision.location_hint ?? null,
+      _event_status: decision.event_status ?? null,
+      _event_summary: decision.event_summary ?? null,
+    });
     log(`PUBLISHED [${row.category}] ${String(row.title).slice(0, 62)}`);
   } catch (err) {
+    if (err instanceof FirecrawlAccountError) {
+      // Not this article's fault, and every remaining one would fail the same
+      // way. Stop and keep what has been harvested so far.
+      log(`aborting: ${err.message}`);
+      log(`${fresh.length - i} candidates left unprocessed - re-run once credits are restored`);
+      break;
+    }
     rejected.push({ url: item.url, reason: `error: ${String(err).slice(0, 200)}` });
     log(`error on ${item.url.slice(0, 60)}: ${String(err).slice(0, 90)}`);
   }
@@ -137,6 +173,10 @@ fs.writeFileSync(
       queries: queriesRun,
       candidates_found: candidates.length,
       candidates_processed: fresh.length,
+      // Everything triage refused, with its reason. Read this: it is the only
+      // record of stories that were never scraped, and the place a too-strict
+      // triage prompt shows up.
+      triaged_out: dropped,
       published,
       rejected,
     },
@@ -147,19 +187,24 @@ fs.writeFileSync(
 
 console.log(
   `\n  done in ${Math.round((Date.now() - started) / 1000)}s — ` +
-    `found ${candidates.length}, processed ${fresh.length}, ` +
+    `found ${candidates.length}, triaged out ${dropped.length}, processed ${fresh.length}, ` +
     `published ${published.length}, rejected ${rejected.length}`,
 );
 console.log(`  written to ${outPath}\n`);
 
-if (rejected.length) {
-  console.log("  REJECTION REASONS");
+const tally = (rows, heading) => {
+  if (!rows.length) return;
+  console.log(`  ${heading}`);
   const byReason = new Map();
-  for (const r of rejected) {
+  for (const r of rows) {
     const k = String(r.reason).slice(0, 70);
     byReason.set(k, (byReason.get(k) ?? 0) + 1);
   }
   for (const [reason, n] of [...byReason.entries()].sort((a, b) => b[1] - a[1])) {
     console.log(`   ${String(n).padStart(2)}  ${reason}`);
   }
-}
+  console.log("");
+};
+
+tally(dropped, "TRIAGED OUT BEFORE SCRAPING - check nothing publishable is here");
+tally(rejected, "REJECTION REASONS");

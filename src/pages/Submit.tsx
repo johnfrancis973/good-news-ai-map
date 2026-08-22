@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Check, Loader2, Shield, TriangleAlert, WifiOff } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, Shield, TriangleAlert, WifiOff } from "lucide-react";
 import { Footer, Header } from "../components/Layout";
 import { LocationSearch } from "../components/LocationSearch";
-import { useSubmitSuggestion } from "../lib/queries";
+import { Toast } from "../components/Toast";
+import { geocodePlace, useSubmitSuggestion } from "../lib/queries";
 import { lastExploreHref } from "../lib/utils";
 
 const FIELD =
@@ -13,78 +14,77 @@ const FIELD =
  * A suggestion queue, not a publishing path.
  *
  * What is sent here lands in a table the public cannot read, through a
- * security-definer function. An operator still runs the same harvest and
- * validation every other story goes through before anything reaches the map.
- * That is what keeps the project's one rule intact: write slow, read fast.
+ * security-definer function. Nothing published here skips validation: the link
+ * goes through the same scrape, the same validator and the same deterministic
+ * gates as every story already on the map, and only that pipeline can publish
+ * it. The checking happens after the response, never during it, which is what
+ * keeps the project's one rule intact: write slow, read fast.
+ *
+ * The coordinates matter more than they look. Geography is a hard filter in the
+ * validator, so a place we cannot resolve means there is nothing to check the
+ * article against, and the suggestion waits for a person instead.
  */
 export default function Submit() {
   const [url, setUrl] = useState("");
   const [place, setPlace] = useState("");
+  const [coords, setCoords] = useState<{ latitude: number; longitude: number } | null>(null);
   const [submitter, setSubmitter] = useState("");
   const [note, setNote] = useState("");
   const [trap, setTrap] = useState(""); // honeypot: bots fill it, people cannot see it
   const [invalid, setInvalid] = useState<string | null>(null);
+  const [thanks, setThanks] = useState(false);
 
   const submit = useSubmitSuggestion();
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setInvalid(null);
 
     if (trap) return; // silently drop
-    if (!/^https?:\/\/\S+\.\S+/.test(url.trim())) {
+    const link = url.trim();
+    const where = place.trim();
+
+    if (!/^https?:\/\/\S+\.\S+/.test(link)) {
       setInvalid("Paste the full link to the article, starting with https://");
       return;
     }
-    if (place.trim().length < 2) {
+    if (where.length < 2) {
       setInvalid("Tell us where it happened.");
       return;
     }
 
-    submit.mutate({
-      url: url.trim(),
-      place: place.trim(),
-      submitter: submitter.trim(),
-      note: note.trim(),
-    });
-  }
+    // Typed a place but never picked one from the list. Try to resolve it once
+    // so the link can still be checked automatically; if that fails, send it
+    // anyway rather than blocking on a geocoder.
+    let at = coords;
+    if (!at) {
+      try {
+        const [top] = await geocodePlace(where);
+        if (top) at = { latitude: top.latitude, longitude: top.longitude };
+      } catch {
+        at = null;
+      }
+    }
 
-  if (submit.isSuccess) {
-    return (
-      <Shell>
-        <div className="flex flex-col items-center gap-4 rounded-2xl border border-border bg-card p-8 text-center sm:p-10">
-          <span className="grid h-[54px] w-[54px] place-items-center rounded-full bg-accent text-accent-foreground">
-            <Check className="h-[26px] w-[26px]" strokeWidth={2} />
-          </span>
-          <h1 className="display text-[28px] leading-[1.08] sm:text-[32px]">
-            Thank you — it is in the queue.
-          </h1>
-          <p className="max-w-md text-[13px] leading-[1.65] text-muted-foreground">
-            A person reads every suggestion. Submitting does not put a story on the
-            map: the article still has to be checked against its original source
-            before it appears anywhere.
-          </p>
-          <div className="mt-1 flex flex-wrap justify-center gap-2.5">
-            <Link
-              to={lastExploreHref()}
-              className="inline-flex h-11 items-center rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:brightness-95"
-            >
-              Explore the map
-            </Link>
-            <button
-              type="button"
-              onClick={() => {
-                submit.reset();
-                setUrl("");
-                setNote("");
-              }}
-              className="inline-flex h-11 items-center rounded-full border border-input bg-card px-5 text-sm font-semibold transition hover:border-primary/40"
-            >
-              Share another
-            </button>
-          </div>
-        </div>
-      </Shell>
+    submit.mutate(
+      {
+        url: link,
+        place: where,
+        submitter: submitter.trim(),
+        note: note.trim(),
+        latitude: at?.latitude ?? null,
+        longitude: at?.longitude ?? null,
+      },
+      {
+        onSuccess: () => {
+          setThanks(true);
+          // Reset behind the popup so the form is ready for the next one.
+          setUrl("");
+          setNote("");
+          setCoords(null);
+          submit.reset();
+        },
+      },
     );
   }
 
@@ -100,6 +100,22 @@ export default function Submit() {
 
   return (
     <Shell>
+      {thanks && (
+        <Toast
+          title="Thank you for your submission."
+          onClose={() => setThanks(false)}
+          action="Share another"
+        >
+          It will be reviewed by our team and will be available if it is verified.
+          <Link
+            to={lastExploreHref()}
+            className="mt-3 inline-flex font-semibold text-foreground underline underline-offset-4"
+          >
+            Explore the map
+          </Link>
+        </Toast>
+      )}
+
       <div className="mb-9 flex flex-col gap-4">
         <p className="inline-flex h-[30px] w-fit items-center gap-2 rounded-full bg-accent px-3.5 text-xs font-bold text-accent-foreground">
           <span className="h-1.5 w-1.5 rounded-full bg-primary" />
@@ -110,9 +126,10 @@ export default function Submit() {
         </h1>
         <p className="max-w-xl text-base leading-[1.7] text-muted-foreground">
           Found something good that actually happened, reported by a real
-          publication? Send us the link. Nothing is published automatically — a
-          person checks the source first, and the article goes through the same
-          validation as everything else on the map.
+          publication? Send us the link. We read the article at its original
+          source within minutes and put it through the same validation as
+          everything else on the map — so a story that passes can appear almost
+          straight away, and one that does not is looked at by a person.
         </p>
       </div>
 
@@ -143,8 +160,17 @@ export default function Submit() {
             size="md"
             action="Use"
             placeholder="City, region or country"
-            onQueryChange={setPlace}
-            onResolved={(p) => setPlace(p.name)}
+            onQueryChange={(q) => {
+              setPlace(q);
+              // Editing the text invalidates whatever was resolved before it.
+              // Coordinates that outlive their place name would send the
+              // validator hunting for the article in the wrong country.
+              setCoords(null);
+            }}
+            onResolved={(p) => {
+              setPlace(p.name);
+              setCoords({ latitude: p.latitude, longitude: p.longitude });
+            }}
           />
         </Field>
 
@@ -223,9 +249,12 @@ export default function Submit() {
           <span className="text-sm font-bold">What happens to what you send</span>
           <span className="text-[13px] leading-[1.65] text-muted-foreground">
             Suggestions go into a queue nobody can read back — not other visitors,
-            not you, not anyone holding the public key. An operator triages them
-            from the command line, and the article is harvested and validated
-            exactly like every other story before it appears on the map.
+            not you, not anyone holding the public key. The link is then checked
+            automatically: we fetch the article from its publisher and run it
+            through the same validation as every other story, which can reject it
+            for being an announcement rather than something that happened, for
+            being about somewhere else, or for not being traceable to its source.
+            Anything the check refuses is looked at by a person.
           </span>
         </div>
       </div>

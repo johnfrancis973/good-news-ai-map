@@ -174,8 +174,27 @@ const suggest = (url, place = "Cayenne, French Guiana") =>
 
 const good = await suggest("https://example.com/a-good-thing-happened");
 check("a valid suggestion is accepted", good.status === 200, JSON.stringify(good.body));
-check("a suggestion returns nothing readable", JSON.stringify(good.body ?? {}) === '{"ok":true}',
-  JSON.stringify(good.body));
+
+// The reply carries an id now, because the edge function needs one to record
+// what the automatic check decided. That is the ONLY thing added: the id is a
+// random uuid for a row the caller just created, and the table it points at
+// still has no read path. What must not appear is any stored content.
+const reply = good.body ?? {};
+const replyKeys = Object.keys(reply).sort().join(",");
+check("a suggestion returns an acknowledgement, not a row",
+  replyKeys === "id,ok" && reply.ok === true, JSON.stringify(reply));
+check("a suggestion returns nothing readable",
+  !JSON.stringify(reply).includes("example.com"), JSON.stringify(reply));
+
+// The queue stays sealed with the publishable key, id in hand or not.
+const peek = await rest(`story_suggestions?id=eq.${reply.id}&select=source_url`);
+check("a suggestion cannot be read back with its own id",
+  peek.status >= 400 || JSON.stringify(peek.body ?? []) === "[]", String(peek.status));
+
+// Deciding to spend money is service-role only. If the publishable key can
+// reach this, the daily budget is not a budget.
+const slot = await rpc("claim_verification_slot", { p_id: reply.id });
+check("the public cannot claim a verification slot", slot.status >= 400, String(slot.status));
 
 const notUrl = await suggest("not a url");
 check("a non-URL suggestion is refused", notUrl.status >= 400, String(notUrl.status));
