@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Menu, Search, Sparkle, X } from "lucide-react";
+import { Menu, Plus, Search, Sparkle, X } from "lucide-react";
 import { LocationSearch, type Resolved } from "./LocationSearch";
 import { cn, exploreHref } from "../lib/utils";
 
 const NAV = [
   { to: "/explore", label: "Explore" },
-  { to: "/submit", label: "Submit Story" },
+  { to: "/submit", label: "Submit a story" },
 ];
 
-export function Header({ className }: { className?: string }) {
+export function Header({
+  className,
+  active,
+}: {
+  className?: string;
+  /** Which nav item to mark as the current page. */
+  active?: "explore" | "submit";
+}) {
   const navigate = useNavigate();
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -30,31 +37,38 @@ export function Header({ className }: { className?: string }) {
   }
 
   return (
-    <header
-      className={cn(
-        "sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur",
-        className,
-      )}
-    >
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
-        <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight">
-          <span className="grid h-7 w-7 place-items-center rounded-full bg-primary text-primary-foreground">
+    <header className={cn("bg-forest text-forest-foreground", className)}>
+      <div className="mx-auto flex h-[68px] max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
+        <Link to="/" className="flex items-center gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
             <Sparkle className="h-4 w-4" />
           </span>
-          <span className="whitespace-nowrap text-[15px]">Good News AI Map</span>
+          <span className="display whitespace-nowrap text-xl sm:text-[21px]">
+            Good News AI Map
+          </span>
         </Link>
 
-        <div className="flex items-center gap-1 sm:gap-2">
-          <nav className="hidden items-center sm:flex">
-            {NAV.map((item) => (
-              <Link
-                key={item.to}
-                to={item.to}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
-              >
-                {item.label}
-              </Link>
-            ))}
+        <div className="flex items-center gap-1 sm:gap-4">
+          <nav className="hidden items-center gap-5 sm:flex">
+            {NAV.map((item) => {
+              const isActive =
+                (active === "explore" && item.to === "/explore") ||
+                (active === "submit" && item.to === "/submit");
+              return (
+                <Link
+                  key={item.to}
+                  to={item.to}
+                  className={cn(
+                    "text-sm transition",
+                    isActive
+                      ? "font-semibold text-forest-foreground"
+                      : "font-medium text-forest-muted hover:text-forest-foreground",
+                  )}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
 
           <div ref={searchRef} className="relative">
@@ -63,13 +77,13 @@ export function Header({ className }: { className?: string }) {
               onClick={() => setSearchOpen((v) => !v)}
               aria-label="Search a place"
               aria-expanded={searchOpen}
-              className="grid h-9 w-9 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              className="grid h-10 w-10 place-items-center rounded-full border border-forest-foreground/15 text-forest-muted transition hover:border-forest-foreground/35 hover:text-forest-foreground"
             >
               <Search className="h-4 w-4" />
             </button>
 
             {searchOpen && (
-              <div className="absolute right-0 z-40 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-border bg-card p-3 shadow-lg">
+              <div className="absolute right-0 z-40 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-lg border border-border bg-card p-3 text-foreground shadow-raised">
                 {/* Same component, same geocoding path as every other search. */}
                 <LocationSearch onResolved={go} size="md" action="Go" autoFocus />
               </div>
@@ -78,10 +92,10 @@ export function Header({ className }: { className?: string }) {
 
           <Link
             to="/submit"
-            className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-2 text-sm font-semibold text-primary-foreground transition hover:opacity-90 sm:px-4"
+            className="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-4 text-sm font-semibold text-primary-foreground transition hover:brightness-95 sm:px-5"
           >
-            <Sparkle className="h-3.5 w-3.5" />
-            <span className="hidden xs:inline">Share Good News</span>
+            <Plus className="h-4 w-4" />
+            <span className="hidden xs:inline">Share good news</span>
             <span className="xs:hidden">Share</span>
           </Link>
 
@@ -90,7 +104,7 @@ export function Header({ className }: { className?: string }) {
             onClick={() => setMenuOpen((v) => !v)}
             aria-label={menuOpen ? "Close menu" : "Open menu"}
             aria-expanded={menuOpen}
-            className="grid h-9 w-9 place-items-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground sm:hidden"
+            className="grid h-10 w-10 place-items-center rounded-full text-forest-muted transition hover:text-forest-foreground sm:hidden"
           >
             {menuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
           </button>
@@ -98,13 +112,13 @@ export function Header({ className }: { className?: string }) {
       </div>
 
       {menuOpen && (
-        <nav className="border-t border-border bg-background px-4 py-2 sm:hidden">
+        <nav className="border-t border-forest-foreground/10 px-4 py-2 sm:hidden">
           {NAV.map((item) => (
             <Link
               key={item.to}
               to={item.to}
               onClick={() => setMenuOpen(false)}
-              className="block rounded-lg px-2 py-2.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              className="block rounded-md px-2 py-3 text-sm font-medium text-forest-muted transition hover:text-forest-foreground"
             >
               {item.label}
             </Link>
@@ -117,13 +131,21 @@ export function Header({ className }: { className?: string }) {
 
 export function Footer() {
   return (
-    <footer className="border-t border-border py-10">
-      <div className="mx-auto max-w-3xl px-6 text-center text-xs leading-6 text-muted-foreground">
-        <p>
-          Every story links to its original source. Summaries are AI-generated from
-          those sources.
-        </p>
-        <p className="mt-1">Map data © OpenStreetMap contributors.</p>
+    <footer className="border-t border-border">
+      <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 py-8 text-center sm:flex-row sm:text-left">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-forest text-forest-accent">
+            <Sparkle className="h-3.5 w-3.5" />
+          </span>
+          <span className="text-sm font-semibold">Good News AI Map</span>
+        </div>
+        <div className="flex flex-col gap-1 text-xs leading-5 text-muted-foreground sm:text-right">
+          <p>
+            Every story links to its original source. Summaries are AI-generated
+            from those sources.
+          </p>
+          <p>Map data © OpenStreetMap contributors.</p>
+        </div>
       </div>
     </footer>
   );

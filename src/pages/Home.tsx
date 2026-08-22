@@ -1,10 +1,28 @@
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, LayoutGrid, MapPin, Sparkle } from "lucide-react";
+import { ArrowRight, BookOpen, CheckSquare, Info, MapPin } from "lucide-react";
 import { Footer, Header } from "../components/Layout";
 import { LocationSearch, type Resolved } from "../components/LocationSearch";
 import { StoryCard } from "../components/StoryCard";
 import { useFeaturedStories, useLocations } from "../lib/queries";
 import { exploreHref } from "../lib/utils";
+
+const PILLARS = [
+  {
+    icon: BookOpen,
+    title: "What happened",
+    body: "A short, factual summary of a real reported development, written from the original article and nothing else.",
+  },
+  {
+    icon: Info,
+    title: "Why it matters",
+    body: "The significance behind the headline, so that a good story is more than a feel-good moment.",
+  },
+  {
+    icon: CheckSquare,
+    title: "What you can do",
+    body: "Three realistic actions tied to that specific story. No empty gestures, no petitions to nowhere.",
+  },
+];
 
 export default function Home() {
   const navigate = useNavigate();
@@ -24,122 +42,101 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <Header />
+      {/* Header and hero share one dark band; the seam between them must not
+          show, so they live in the same element. */}
+      <div className="bg-forest text-forest-foreground">
+        <Header />
+
+        {/* max-w-4xl, not 3xl: at 92px the first line of the headline needs
+            ~900px to stay on one line, which is how the design breaks it. */}
+        <section className="mx-auto flex max-w-4xl flex-col items-center gap-6 px-6 pb-16 pt-12 text-center sm:pb-[74px] sm:pt-[62px]">
+          {locations.length > 0 && (
+            <p className="inline-flex h-8 items-center gap-2.5 rounded-full border border-forest-foreground/15 px-4 text-xs font-medium text-forest-muted">
+              <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+              Verified stories from {locations.length}{" "}
+              {locations.length === 1 ? "place" : "places"}
+            </p>
+          )}
+
+          <h1 className="display animate-fade-up text-5xl leading-[0.96] tracking-[-0.025em] sm:text-[76px] lg:text-[92px]">
+            Good things are happening{" "}
+            {/* Its own line from sm up, exactly as the design breaks it. */}
+            <span className="italic text-forest-accent sm:block">everywhere.</span>
+          </h1>
+
+          <p className="max-w-lg text-pretty text-base leading-[1.6] text-forest-muted sm:text-lg">
+            Search any city and see what is actually getting better there — every
+            story linked to the publication that reported it.
+          </p>
+
+          <div className="mt-2 w-full max-w-xl">
+            <LocationSearch
+              onResolved={go}
+              action="Search"
+              placeholder="Try Cayenne, London or New York"
+              pill
+              autoFocus
+            />
+          </div>
+
+          {locations.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-2.5">
+              <span className="text-[13px] text-forest-muted/80">or jump to</span>
+              {locations.slice(0, 4).map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  onClick={() =>
+                    go({
+                      name: l.name,
+                      latitude: l.latitude,
+                      longitude: l.longitude,
+                      radiusKm: l.default_radius_km ?? 50,
+                    })
+                  }
+                  className="inline-flex h-9 items-center gap-1.5 rounded-full border border-forest-foreground/15 px-3.5 text-[13px] font-medium text-forest-foreground/90 transition hover:border-forest-foreground/40"
+                >
+                  <MapPin className="h-3.5 w-3.5 text-forest-muted" />
+                  {l.name.split(",")[0]}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
 
       <main className="flex-1">
-        <section className="relative overflow-hidden">
-          {/* Restrained atmosphere: a single soft wash, no gimmicks. */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(70%_60%_at_50%_-10%,hsl(var(--accent))_0%,transparent_70%)]"
-          />
-
-          <div className="mx-auto max-w-3xl px-6 pb-16 pt-16 text-center sm:pt-24">
-            <p className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-card px-3.5 py-1.5 text-xs font-medium text-primary">
-              <Sparkle className="h-3.5 w-3.5" />
-              Positive news, real-world impact
-            </p>
-
-            <h1 className="animate-fade-up font-display text-4xl font-bold leading-[1.08] tracking-tight sm:text-6xl">
-              Good things are happening{" "}
-              {/* Its own line from sm up, exactly as the mockup breaks it. */}
-              <span className="text-primary sm:block">everywhere.</span>
-            </h1>
-
-            <p className="mx-auto mt-6 max-w-2xl text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
-              Discover positive change and real-world solutions from around the
-              globe — and see how AI could help create more of them.
-            </p>
-
-            <div className="mx-auto mt-9 max-w-xl">
-              <LocationSearch
-                onResolved={go}
-                action="Search"
-                placeholder="Search a city — e.g. New York, Tokyo, Amsterdam"
-                pill
-                autoFocus
-              />
-            </div>
-
-            <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-              <Link
-                to="/explore"
-                className="inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground transition hover:opacity-90"
-              >
-                Explore Stories
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                to="/submit"
-                className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-5 py-2.5 text-sm font-semibold text-foreground transition hover:border-primary/40 hover:bg-accent"
-              >
-                <Sparkle className="h-4 w-4" />
-                Share Good News
-              </Link>
-            </div>
-
-            {/* Only shown when the grid below cannot be: never a dead section. */}
-            {!showGrid && locations.length > 0 && (
-              <div className="mt-10">
-                <p className="mb-2.5 text-xs uppercase tracking-wide text-muted-foreground">
-                  Start with
-                </p>
-                <div className="flex flex-wrap justify-center gap-2">
-                  {locations.slice(0, 6).map((l) => (
-                    <button
-                      key={l.id}
-                      type="button"
-                      onClick={() =>
-                        go({
-                          name: l.name,
-                          latitude: l.latitude,
-                          longitude: l.longitude,
-                          radiusKm: l.default_radius_km ?? 50,
-                        })
-                      }
-                      className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3.5 py-1.5 text-sm text-foreground transition hover:border-primary/40 hover:bg-accent"
-                    >
-                      <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
-                      {l.name.split(",")[0]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-
         {showGrid && (
-          <section className="mx-auto max-w-7xl px-6 pb-20">
-            <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+          <section className="mx-auto max-w-7xl px-6 pt-12 sm:pt-[52px]">
+            <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
               <div>
-                <h2 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">
-                  Good News Worth Knowing
+                <h2 className="display text-[34px] leading-[1.03] sm:text-[40px]">
+                  Good news worth knowing
                 </h2>
-                <p className="mt-1.5 text-sm text-muted-foreground">
-                  Real stories of positive change, with evidence and lessons you
-                  can use.
+                <p className="mt-1.5 text-[15px] text-muted-foreground">
+                  Real stories of positive change, with the evidence and what you
+                  can do about it.
                 </p>
               </div>
               <Link
                 to="/explore"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition hover:text-foreground"
+                className="inline-flex h-11 items-center gap-2 rounded-full border border-input bg-card px-5 text-sm font-semibold transition hover:border-primary/40"
               >
                 View all
-                <LayoutGrid className="h-4 w-4" />
+                <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
 
             {featuredError ? (
-              <p className="rounded-2xl border border-border bg-card p-6 text-sm text-muted-foreground">
+              <p className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
                 Could not reach the story database. The map still works —{" "}
-                <Link to="/explore" className="text-primary underline">
+                <Link to="/explore" className="font-semibold text-primary underline">
                   try exploring
                 </Link>
                 .
               </p>
             ) : (
-              <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-[22px] sm:grid-cols-2 lg:grid-cols-3">
                 {featuredLoading
                   ? Array.from({ length: 6 }, (_, i) => <CardSkeleton key={i} />)
                   : featured.map((story) => (
@@ -150,25 +147,15 @@ export default function Home() {
           </section>
         )}
 
-        <section className="mx-auto max-w-5xl px-6 pb-24">
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[
-              {
-                title: "What happened",
-                body: "A short, factual summary of a real reported development, written from the original article.",
-              },
-              {
-                title: "Why it matters",
-                body: "The significance behind the headline, so a good story is more than a feel-good moment.",
-              },
-              {
-                title: "What you can do",
-                body: "Three realistic, concrete actions tied to that specific story. No empty gestures.",
-              },
-            ].map((c) => (
-              <div key={c.title} className="rounded-2xl border border-border bg-card p-5">
-                <h3 className="font-display text-base font-bold">{c.title}</h3>
-                <p className="mt-1.5 text-sm leading-6 text-muted-foreground">{c.body}</p>
+        <section className="mx-auto max-w-7xl px-6 pb-16 pt-14 sm:pt-[58px]">
+          <div className="grid gap-[22px] rounded-2xl border border-border bg-card p-7 sm:grid-cols-3 sm:p-[34px]">
+            {PILLARS.map(({ icon: Icon, title, body }) => (
+              <div key={title} className="flex flex-col gap-3">
+                <span className="grid h-[42px] w-[42px] place-items-center rounded-md bg-accent text-accent-foreground">
+                  <Icon className="h-5 w-5" strokeWidth={1.8} />
+                </span>
+                <h3 className="display text-[26px] leading-[1.1]">{title}</h3>
+                <p className="text-sm leading-[1.7] text-muted-foreground">{body}</p>
               </div>
             ))}
           </div>
@@ -182,13 +169,13 @@ export default function Home() {
 
 function CardSkeleton() {
   return (
-    <div className="overflow-hidden rounded-2xl border border-border bg-card">
+    <div className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="aspect-[16/10] animate-pulse bg-muted" />
-      <div className="space-y-3 p-5">
-        <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
-        <div className="h-4 w-5/6 animate-pulse rounded bg-muted" />
-        <div className="h-3 w-full animate-pulse rounded bg-muted" />
-        <div className="h-3 w-4/6 animate-pulse rounded bg-muted" />
+      <div className="space-y-3 p-4 sm:px-[18px]">
+        <div className="h-3 w-1/3 animate-pulse rounded-sm bg-muted" />
+        <div className="h-5 w-5/6 animate-pulse rounded-sm bg-muted" />
+        <div className="h-3 w-full animate-pulse rounded-sm bg-muted" />
+        <div className="h-3 w-4/6 animate-pulse rounded-sm bg-muted" />
       </div>
     </div>
   );

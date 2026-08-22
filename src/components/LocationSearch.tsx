@@ -122,9 +122,11 @@ export function LocationSearch({
     <div ref={boxRef} className="relative w-full">
       <div
         className={cn(
-          "flex items-center gap-2 border border-input bg-card shadow-sm transition focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-ring/25",
-          pill ? "rounded-full" : "rounded-xl",
-          size === "lg" ? (pill ? "py-2 pl-5 pr-2" : "px-4 py-3") : "px-3 py-2",
+          "flex items-center gap-2.5 bg-card transition focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/20",
+          pill
+            ? "rounded-full border border-transparent p-[7px] pl-[22px] shadow-raised"
+            : "rounded-full border border-input px-4 py-2",
+          size === "lg" && !pill && "px-4 py-3",
         )}
       >
         <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -156,18 +158,21 @@ export function LocationSearch({
           onClick={submit}
           disabled={suggestions.length === 0}
           className={cn(
-            "inline-flex shrink-0 items-center gap-1.5 bg-primary font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-40",
-            pill ? "rounded-full" : "rounded-lg",
-            size === "lg" ? "px-4 py-2 text-sm" : "px-3 py-1.5 text-xs",
+            // Forest, not coral: the primary action on this screen is the
+            // story you go on to open, not the act of searching.
+            // Disabled goes to the muted surface rather than a faded forest:
+            // a translucent dark pill on white just reads as a grey smudge.
+            "inline-flex shrink-0 items-center gap-1.5 rounded-full bg-forest font-semibold text-forest-foreground transition hover:brightness-110 disabled:bg-muted disabled:text-muted-foreground",
+            pill ? "h-12 px-6 text-[15px]" : "h-9 px-4 text-[13px]",
           )}
         >
-          <Search className={size === "lg" ? "h-3.5 w-3.5" : "h-3 w-3"} />
+          <Search className={pill ? "h-4 w-4" : "h-3.5 w-3.5"} />
           {action}
         </button>
       </div>
 
       {open && suggestions.length > 0 && (
-        <ul className="absolute z-40 mt-2 w-full overflow-hidden rounded-xl border border-border bg-card shadow-lg">
+        <ul className="absolute z-40 mt-2 w-full overflow-hidden rounded-md border border-border bg-card shadow-raised">
           {suggestions.map((s, i) => (
             <li key={`${s.name}-${i}`}>
               <button

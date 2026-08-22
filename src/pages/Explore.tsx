@@ -62,17 +62,18 @@ export default function Explore() {
 
   const center: [number, number] = [lat ?? 4.9227, lng ?? -52.3269];
   const hasLocation = lat !== null && lng !== null;
+  const place = name.split(",")[0];
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      <Header />
+      <Header active="explore" className="shrink-0" />
 
-      <div className="border-b border-border bg-background/95">
-        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="w-full lg:max-w-md">
-            <LocationSearch onResolved={go} size="md" />
+      <div className="shrink-0 border-b border-border bg-background">
+        <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3.5 sm:px-6 lg:h-[68px] lg:flex-row lg:items-center lg:justify-between lg:gap-6 lg:py-0">
+          <div className="w-full lg:max-w-sm">
+            <LocationSearch onResolved={go} size="md" action="Go" />
           </div>
-          <div className="flex items-center gap-3 overflow-x-auto">
+          <div className="-mx-4 flex items-center gap-3 overflow-x-auto px-4 sm:mx-0 sm:px-0">
             <CategoryFilter value={category} counts={counts} onChange={setCategory} />
           </div>
         </div>
@@ -93,66 +94,98 @@ export default function Explore() {
               onMarkerHover={(id) => id && setActiveId(id)}
             />
           ) : (
-            <div className="grid h-full place-items-center p-8 text-center text-sm text-muted-foreground">
-              <div>
-                <Compass className="mx-auto mb-3 h-7 w-7" />
-                Search a place to see what is getting better there.
+            <div className="grid h-full place-items-center bg-muted/40 p-8 text-center">
+              <div className="flex max-w-xs flex-col items-center gap-4">
+                <span className="grid h-14 w-14 place-items-center rounded-full bg-accent text-accent-foreground">
+                  <Compass className="h-6 w-6" strokeWidth={1.6} />
+                </span>
+                <p className="display text-2xl leading-[1.12]">
+                  Search a place to see what is getting better there.
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {locations.slice(0, 3).map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() =>
+                        go({
+                          name: l.name,
+                          latitude: l.latitude,
+                          longitude: l.longitude,
+                          radiusKm: l.default_radius_km ?? 50,
+                        })
+                      }
+                      className="inline-flex h-9 items-center rounded-full border border-input bg-card px-3.5 text-[13px] font-semibold transition hover:border-primary/40"
+                    >
+                      {l.name.split(",")[0]}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
         </div>
 
         {/* Story panel */}
-        <aside className="thin-scroll flex-1 overflow-y-auto lg:max-w-[460px] xl:max-w-[520px]">
-          <div className="p-4 sm:p-5">
-            {hasLocation && (
-              <div className="mb-4">
-                <h1 className="text-lg font-semibold tracking-tight">
-                  {name || "Selected area"}
+        <aside className="thin-scroll flex-1 overflow-y-auto lg:max-w-[460px] xl:max-w-[480px]">
+          {hasLocation && (
+            <div className="flex items-end justify-between gap-4 border-b border-border px-5 py-4 sm:px-[22px]">
+              <div className="min-w-0">
+                <h1 className="display truncate text-[30px] leading-[1.05]">
+                  {place || "Selected area"}
                 </h1>
-                <p className="mt-0.5 text-sm text-muted-foreground">
+                <p className="mt-0.5 text-[13px] text-muted-foreground">
                   {isLoading
-                    ? "Loading stories…"
+                    ? "Loading…"
                     : `${visible.length} ${visible.length === 1 ? "story" : "stories"} within ${radius} km`}
                 </p>
               </div>
-            )}
+            </div>
+          )}
 
+          <div className="p-4 sm:p-[22px]">
             {isLoading && (
-              <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Reading stories from the database
+              <div className="flex flex-col gap-2.5">
+                {/* The wording is deliberate: this is a database read, not a
+                    model call. Nothing on this page is generated while you wait. */}
+                <div className="flex items-center gap-2.5 pb-1 text-[13px] font-semibold text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Reading stories from the database
+                </div>
+                {Array.from({ length: 3 }, (_, i) => (
+                  <RowSkeleton key={i} />
+                ))}
               </div>
             )}
 
             {isError && (
-              <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+              <div className="rounded-md border border-border bg-card p-5 text-sm text-muted-foreground">
                 Could not reach the story database. Try again in a moment.
               </div>
             )}
 
             {/* Empty state — instant. We never hold the user while ingestion runs. */}
             {hasLocation && !isLoading && !isError && visible.length === 0 && (
-              <div className="rounded-xl border border-border bg-card p-6">
-                <h2 className="text-base font-semibold">
-                  No recent positive stories found here yet.
+              <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-5">
+                <h2 className="text-[15px] font-bold leading-snug">
+                  No recent positive stories here yet.
                 </h2>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                <p className="text-[13px] leading-[1.65] text-muted-foreground">
                   {category
                     ? "Nothing in this category here yet. Try another category, or another place."
-                    : "We have not gathered stories for this area yet. These places are ready now:"}
+                    : "We have not gathered stories for this area. Nothing is being fetched right now — these places are ready:"}
                 </p>
 
                 {category ? (
                   <button
                     type="button"
                     onClick={() => setCategory(null)}
-                    className="mt-4 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+                    className="inline-flex h-11 w-fit items-center rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:brightness-95"
                   >
                     Show all categories
                   </button>
                 ) : (
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {locations.slice(0, 6).map((l) => (
                       <button
                         key={l.id}
@@ -165,7 +198,7 @@ export default function Explore() {
                             radiusKm: l.default_radius_km ?? 50,
                           })
                         }
-                        className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-sm transition hover:border-primary/40 hover:bg-accent"
+                        className="inline-flex h-9 items-center gap-1.5 rounded-full border border-input bg-background px-3.5 text-[13px] font-semibold transition hover:border-primary/40"
                       >
                         <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
                         {l.name.split(",")[0]}
@@ -176,7 +209,7 @@ export default function Explore() {
               </div>
             )}
 
-            <div className="space-y-3">
+            <div className="flex flex-col gap-2.5">
               {visible.map((story) => (
                 <StoryCard
                   key={story.id}
@@ -193,6 +226,19 @@ export default function Explore() {
           </div>
         </aside>
       </main>
+    </div>
+  );
+}
+
+function RowSkeleton() {
+  return (
+    <div className="flex gap-3.5 rounded-md border border-border/70 bg-card p-3.5">
+      <div className="h-16 w-16 shrink-0 animate-pulse rounded-sm bg-muted" />
+      <div className="flex flex-1 flex-col gap-2 pt-1">
+        <div className="h-2.5 w-2/5 animate-pulse rounded-sm bg-muted" />
+        <div className="h-3 w-11/12 animate-pulse rounded-sm bg-muted" />
+        <div className="h-3 w-3/5 animate-pulse rounded-sm bg-muted" />
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Figtree:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
@@ -6,51 +6,68 @@
 
 @layer base {
   :root {
-    --background: 150 20% 99%;
-    --foreground: 200 20% 12%;
+    --background: 42 56% 96%;
+    --foreground: 156 27% 11%;
 
     --card: 0 0% 100%;
-    --card-foreground: 200 20% 12%;
+    --card-foreground: 156 27% 11%;
 
-    --muted: 160 16% 96%;
-    --muted-foreground: 200 8% 44%;
+    --muted: 39 41% 93%;
+    --muted-foreground: 152 8% 39%;
 
-    --primary: 158 64% 28%;
-    --primary-foreground: 150 30% 98%;
+    --primary: 14 70% 51%;
+    --primary-foreground: 26 100% 97%;
 
-    --accent: 158 46% 94%;
-    --accent-foreground: 158 64% 22%;
+    --accent: 140 23% 92%;
+    --accent-foreground: 162 59% 11%;
 
-    --destructive: 0 68% 42%;
+    /* The dark band behind the header and hero. A surface, not a button. */
+    --forest: 162 59% 11%;
+    --forest-foreground: 35 81% 96%;
+    --forest-muted: 152 19% 71%;
+    --forest-accent: 15 78% 73%;
 
-    --border: 165 14% 89%;
-    --input: 165 14% 89%;
-    --ring: 158 64% 34%;
+    --destructive: 14 72% 40%;
 
-    --radius: 0.75rem;
+    --border: 39 47% 89%;
+    --input: 39 24% 83%;
+    --ring: 14 70% 51%;
+
+    --radius: 1rem;
   }
 
   .dark {
-    --background: 200 24% 8%;
-    --foreground: 160 12% 94%;
+    --background: 162 43% 8%;
+    --foreground: 147 24% 93%;
 
-    --card: 200 22% 11%;
-    --card-foreground: 160 12% 94%;
+    --card: 161 45% 12%;
+    --card-foreground: 147 24% 93%;
 
-    --muted: 200 18% 16%;
-    --muted-foreground: 190 8% 62%;
+    --muted: 162 35% 16%;
+    --muted-foreground: 153 11% 62%;
 
-    --primary: 158 52% 46%;
-    --primary-foreground: 200 26% 8%;
+    /* Coral lifts from 51% to 64% lightness so it keeps 4.5:1 on the dark card. */
+    --primary: 15 82% 64%;
+    --primary-foreground: 162 43% 8%;
 
-    --accent: 200 20% 18%;
-    --accent-foreground: 158 52% 74%;
+    --accent: 161 40% 15%;
+    --accent-foreground: 15 78% 73%;
 
-    --destructive: 0 62% 58%;
+    /* Dark mode inverts the relationship: the page is already near-black, so
+       forest has to be LIGHTER than the card, not darker. Keeping it at the
+       card's lightness made every solid forest button — "Read the original
+       article", the search action, the selected "All" filter — vanish into
+       the surface behind it. */
+    --forest: 161 32% 20%;
+    --forest-foreground: 147 24% 93%;
+    --forest-muted: 153 11% 62%;
+    --forest-accent: 15 78% 73%;
 
-    --border: 200 16% 20%;
-    --input: 200 16% 20%;
-    --ring: 158 52% 46%;
+    --destructive: 6 62% 62%;
+
+    --border: 159 36% 18%;
+    --input: 159 36% 18%;
+    --ring: 15 82% 64%;
   }
 
   * {
@@ -63,7 +80,6 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 
   :focus-visible {
@@ -73,7 +89,14 @@
 
 @layer components {
   .prose-block p {
-    @apply text-[15px] leading-7 text-foreground/85;
+    @apply text-base leading-[1.75] text-foreground/90;
+  }
+
+  /* Instrument Serif ships one weight. Asking for bold makes the browser
+     synthesise it, which smears the stems — so display text never sets a
+     weight above 400. This class is the only place that is stated. */
+  .display {
+    @apply font-display font-normal tracking-tight;
   }
 }
 
@@ -94,8 +117,13 @@
   @apply text-muted-foreground underline;
 }
 
+.leaflet-bar {
+  @apply overflow-hidden rounded-xl shadow-md;
+  border: 0;
+}
+
 .leaflet-bar a {
-  @apply bg-card text-foreground border-border;
+  @apply border-0 bg-card text-foreground;
 }
 
 .leaflet-bar a:hover {
@@ -103,11 +131,19 @@
 }
 
 .leaflet-popup-content-wrapper {
-  @apply rounded-lg bg-card text-card-foreground shadow-lg;
+  @apply rounded-2xl bg-card text-card-foreground shadow-lg;
 }
 
 .leaflet-popup-tip {
   @apply bg-card;
+}
+
+.leaflet-tooltip {
+  @apply rounded-lg border-0 bg-card px-2.5 py-1.5 text-card-foreground shadow-md;
+}
+
+.leaflet-tooltip-top::before {
+  border-top-color: hsl(var(--card));
 }
 
 .gnam-marker {
@@ -119,14 +155,14 @@
   width: 100%;
   height: 100%;
   border-radius: 9999px;
-  border: 2.5px solid white;
-  box-shadow: 0 1px 6px rgb(0 0 0 / 0.35);
+  border: 3px solid hsl(var(--card));
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.3);
   transition: transform 0.15s ease;
 }
 
 .gnam-marker-active .gnam-marker-dot {
-  transform: scale(1.45);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.45);
+  transform: scale(1.4);
+  box-shadow: 0 2px 14px rgb(0 0 0 / 0.4);
 }
 
 /* Scrollbar in the story panel */
