@@ -2,6 +2,8 @@
 
 **See what's getting better around you.**
 
+**Live: https://johnfrancis973.github.io/good-news-ai-map/**
+
 Discover real positive stories near you, understand why they matter, and find
 simple ways to take part.
 
@@ -88,7 +90,16 @@ where the edge functions read them from.
 ### 2. Database
 
 Apply `supabase/migrations/0001_init.sql` (Lovable MCP `query_database`, or the
-Supabase SQL editor).
+Supabase SQL editor). Already applied on the live project.
+
+### 2b. Check it works
+
+```sh
+node scripts/verify.mjs
+```
+
+Twenty acceptance checks against the live API: the read path, every row-level
+security guarantee, and the anonymous rating flow. Exits non-zero on failure.
 
 ### 3. Run
 
@@ -107,12 +118,16 @@ node scripts/ingest.mjs "Cayenne" 4.9227 -52.3269 --radius 150 --cc gf
 node scripts/ingest.mjs --status <job_id>
 ```
 
-Or run the identical pipeline from this machine, which needs no deployed
-function:
+Or collect offline, which needs neither a deployed function nor a service role
+key:
 
 ```sh
-node scripts/ingest-local.mjs --preset cayenne
+node scripts/known-urls.mjs
+node scripts/harvest.mjs --preset paris --known harvest/known-urls.json
 ```
+
+With a service role key in `.env.ingest`, `scripts/ingest-local.mjs` runs the
+same pipeline and writes straight to the database.
 
 Both paths import the same `supabase/functions/ingest-location/pipeline.js`, so
 they cannot drift apart. Either way, browsing the site during ingestion is
@@ -138,6 +153,9 @@ completely unaffected.
   Firecrawl or OpenAI credits.
 
 ---
+
+See [HANDOVER.md](HANDOVER.md) for the full handoff: current data, security
+model, deployment, and the platform quirks that cost real time.
 
 Map data © OpenStreetMap contributors. Story facts belong to the publishers
 linked from each story page.
